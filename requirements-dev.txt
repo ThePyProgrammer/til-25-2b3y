@@ -16,4 +16,5 @@ pandas
 
 # This is the til_environment package. You'll need this to train and test your
 # RL model. You can import this package using `import til_environment`.
--e ./til-25-environment
+#-e ./til-25-environment
+

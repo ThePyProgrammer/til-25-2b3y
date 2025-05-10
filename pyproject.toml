@@ -1,0 +1,16 @@
+[project]
+name = "25"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.12",
+    "jiwer>=3.1.0",
+    "pandas>=2.2.3",
+    "pycocotools>=2.0.8",
+    "python-dotenv>=1.1.0",
+    "requests>=2.32.3",
+    "tqdm>=4.67.1",
+    "uvicorn[standard]>=0.34.2",
+]
