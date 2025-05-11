@@ -1,5 +1,5 @@
 import random
-from typing import Optional, Any
+from typing import Optional
 
 import torch
 
@@ -104,6 +104,65 @@ class Experience:
     def __len__(self) -> int:
         """Return the current number of episodes in buffer"""
         return len(self.episode_buffer)
+
+    def get_batch(
+        self,
+        batch_size: int
+    ) -> tuple[
+        list[list[Observation]],
+        torch.Tensor,
+        torch.Tensor,
+        list[list[Observation]],
+        torch.Tensor
+    ]:
+        """
+        Sample a batch from the experience buffer in a format compatible with the encoder.
+
+        Args:
+            batch_size: Number of transitions to sample
+
+        Returns:
+            Tuple containing:
+            - states: List[List[Observation]] - Batch of observation sequences for states
+            - actions: torch.Tensor - Tensor of actions taken
+            - rewards: torch.Tensor - Tensor of rewards received
+            - next_states: List[List[Observation]] - Batch of observation sequences for next states
+            - dones: torch.Tensor - Tensor indicating if transitions were terminal
+        """
+        # Sample batch of transitions
+        transitions = self.sample(batch_size)
+
+        # Extract states, actions, rewards, next_states, and dones
+        states = []
+        next_states = []
+        actions = []
+        rewards = []
+        dones = []
+
+        for transition in transitions:
+            # Get the sequence of observations for current state
+            state_observations = transition.state.get_encoded_sequence()
+            states.append(state_observations)
+
+            # Get action, reward, and done flag
+            actions.append(transition.action)
+            rewards.append(transition.reward)
+            dones.append(float(transition.done))
+
+            # Get the sequence of observations for next state if available
+            if transition.next_state is not None:
+                next_state_observations = transition.next_state.get_encoded_sequence()
+                next_states.append(next_state_observations)
+            else:
+                # If there is no next state (end of episode), use an empty sequence
+                next_states.append([])
+
+        # Convert actions, rewards, and dones to tensors
+        actions_tensor = torch.tensor(actions, dtype=torch.long)
+        rewards_tensor = torch.tensor(rewards, dtype=torch.float)
+        dones_tensor = torch.tensor(dones, dtype=torch.float)
+
+        return states, actions_tensor, rewards_tensor, next_states, dones_tensor
 
     def __call__(
         self,
