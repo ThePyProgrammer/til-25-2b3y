@@ -15,6 +15,12 @@ class Step:
     next_observation: Optional[Observation]
     done: bool
 
+@dataclass
+class StateConfig:
+    max_history: int = 10
+
+DEFAULT_STATE_CONFIG = StateConfig()
+
 class State:
     """
     Class representing a state as a sequence of historical observations.
@@ -22,15 +28,15 @@ class State:
     This is used for environments where temporal information (history)
     is needed for the agent to make decisions.
     """
-    def __init__(self, max_history: int = 10):
+    def __init__(self, config: StateConfig = DEFAULT_STATE_CONFIG):
         """
         Initialize a state with an empty history.
 
         Args:
             max_history: Maximum number of historical observations to store
         """
-        self.max_history = max_history
-        self.observation_history = deque(maxlen=max_history)
+        self.config = config
+        self.observation_history = deque(maxlen=self.config.max_history)
 
     def __getitem__(self, idx):
         return self.observation_history[idx]
@@ -82,8 +88,8 @@ class State:
 
     def clone(self) -> 'State':
         """Create a copy of this state."""
-        new_state = State(max_history=self.max_history)
-        new_state.observation_history = deque(self.observation_history, maxlen=self.max_history)
+        new_state = State(config=self.config)
+        new_state.observation_history = deque(self.observation_history, maxlen=self.config.max_history)
         return new_state
 
     def __len__(self) -> int:
@@ -91,8 +97,12 @@ class State:
         return len(self.observation_history)
 
     @classmethod
-    def from_observations(cls, observations: list[Observation], max_history: int = 10):
-        state = cls(max_history=max_history)
+    def from_observations(
+        cls,
+        observations: list[Observation],
+        config: StateConfig = DEFAULT_STATE_CONFIG
+    ):
+        state = cls(config=config)
         state.observation_history = observations
         return state
 
@@ -108,10 +118,17 @@ class Episode:
     def __init__(self):
         self.steps: list[Step] = []
 
+    def __len__(self):
+        return len(self.steps)
+
     def update(self, step: Step):
         self.steps.append(step)
 
-    def sample_one(self, idx: Optional[int] = None, max_history: int = 10) -> Transition:
+    def sample_one(
+        self,
+        idx: Optional[int] = None,
+        state_config: StateConfig = DEFAULT_STATE_CONFIG
+    ) -> Transition:
         """
         Sample a single transition from the episode at a specific index.
 
@@ -130,11 +147,11 @@ class Episode:
         steps = self.steps[:idx]
         current_step = steps[-1]
         observations = [step.observation for step in steps]
-        state = State.from_observations(observations, max_history=max_history)
+        state = State.from_observations(observations, config=state_config)
 
         if idx < (len(self.steps) - 1):
             next_observation = self.steps[-1].observation
-            next_state = State.from_observations(observations + [next_observation], max_history=max_history)
+            next_state = State.from_observations(observations + [next_observation], config=state_config)
         else:
             next_state = None
 
@@ -146,7 +163,11 @@ class Episode:
             current_step.done,
         )
 
-    def sample_many(self, n: int, idxs: Optional[list[int]] = None, max_history: int = 10) -> list[Transition]:
+    def sample_many(
+        self,
+        n: int, idxs: Optional[list[int]] = None,
+        state_config: StateConfig = DEFAULT_STATE_CONFIG
+    ) -> list[Transition]:
         """
         Sample multiple transitions from the episode.
 
@@ -161,5 +182,5 @@ class Episode:
         if idxs is None:
             idxs = [random.randint(1, len(self.steps) - 1) for _ in range(n)]
 
-        transitions = [self.sample_one(idx, max_history) for idx in idxs]
+        transitions = [self.sample_one(idx, state_config) for idx in idxs]
         return transitions
