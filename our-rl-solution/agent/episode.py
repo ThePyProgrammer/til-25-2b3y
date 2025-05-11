@@ -108,6 +108,9 @@ class Episode:
     def __init__(self):
         self.steps: list[Step] = []
 
+    def update(self, step: Step):
+        self.steps.append(step)
+
     def sample_one(self, idx: Optional[int] = None, max_history: int = 10) -> Transition:
         """
         Sample a single transition from the episode at a specific index.
