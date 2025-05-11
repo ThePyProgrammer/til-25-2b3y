@@ -11,3 +11,8 @@
     - [ ] create our own record of the map to path find towards/away from the scout/guards
     - [ ] teacher (perfect knowledge) to student (limited vision)
     - [ ] "league" of networks (alphastar? style)
+    - [ ] store our own map of the maze
+
+- who even needs rl?:
+    - [ ] the starting location of the scout is always (0, 0),
+        so the guards could totally just pathfind to some region of interest where the scout could be
