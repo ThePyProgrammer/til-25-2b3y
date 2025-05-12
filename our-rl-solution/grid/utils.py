@@ -17,7 +17,7 @@ class Direction(IntEnum):
             Direction.LEFT: "←",
             Direction.UP: "↑"
         }
-        
+
         return DIRECTION_ICONS[self]
 
 
@@ -58,9 +58,9 @@ class Point:
         return self.__str__()
 
 
-def get_hash(coord: Point, direction: Direction) -> int:
+def get_hash(init_position: Point, direction: Direction) -> int:
     """Generate a unique hash for a coordinate and direction combination."""
-    return hash((coord, direction))
+    return hash((init_position, direction))
 
 
 def rotate_wall_bits(tile_value, direction):

@@ -8,16 +8,16 @@ class NodeRegistry:
         self.grid_size = grid_size
         self.nodes: dict[int, 'DirectionalNode'] = {}
 
-    def get_or_create_node(self, coord: Point, direction: Direction) -> 'DirectionalNode':
+    def get_or_create_node(self, position: Point, direction: Direction) -> 'DirectionalNode':
         """Get an existing node from the registry or create a new one if it doesn't exist."""
-        node_hash = get_hash(coord, direction)
+        node_hash = get_hash(position, direction)
 
         # Check if we already have a node with this hash
         if node_hash in self.nodes:
             return self.nodes[node_hash]
 
         # Create a new instance if it doesn't exist
-        node = DirectionalNode(coord, direction, self)
+        node = DirectionalNode(position, direction, self)
         self.nodes[node_hash] = node
 
         node.populate_children()
@@ -26,8 +26,8 @@ class NodeRegistry:
 class DirectionalNode:
     """A node in the path tree that tracks both position and direction."""
 
-    def __init__(self, coord: Point, direction: Direction, registry: NodeRegistry):
-        self.coord = coord
+    def __init__(self, position: Point, direction: Direction, registry: NodeRegistry):
+        self.position = position
         self.direction = direction
         self.registry = registry
         self.children: dict[Action, 'DirectionalNode'] = {}
@@ -40,7 +40,7 @@ class DirectionalNode:
             action: The action to take (FORWARD, BACKWARD, LEFT, RIGHT, STAY)
 
         Returns:
-            tuple: (next_coord, next_direction)
+            tuple: (next_position, next_direction)
         """
         # Movement vectors for each direction: (dx, dy)
         movement_vectors = {
@@ -67,7 +67,7 @@ class DirectionalNode:
         }
 
         # Start with current position and direction
-        next_coord = Point(self.coord.x, self.coord.y)
+        next_position = Point(self.position.x, self.position.y)
         next_direction = self.direction
 
         if action == Action.STAY:
@@ -77,23 +77,23 @@ class DirectionalNode:
         elif action == Action.FORWARD:
             # Move forward in current direction
             dx, dy = movement_vectors[self.direction]
-            next_coord.x += dx
-            next_coord.y += dy
+            next_position.x += dx
+            next_position.y += dy
 
         elif action == Action.BACKWARD:
             # Move backward (opposite of current direction)
             dx, dy = movement_vectors[self.direction]
-            next_coord.x -= dx
-            next_coord.y -= dy
+            next_position.x -= dx
+            next_position.y -= dy
 
         elif action in (Action.LEFT, Action.RIGHT):
-            # Turn and move in the new direction
+            # Turn without moving
             next_direction = direction_changes[action][self.direction]
-            dx, dy = movement_vectors[next_direction]
-            next_coord.x += dx
-            next_coord.y += dy
+            # dx, dy = movement_vectors[next_direction]
+            # next_position.x += dx
+            # next_position.y += dy
 
-        return next_coord, next_direction
+        return next_position, next_direction
 
     def populate_children(self):
         """
@@ -104,33 +104,33 @@ class DirectionalNode:
 
         for action in Action:
             # Calculate next position and direction
-            next_coord, next_direction = self._get_next_state(action)
+            next_position, next_direction = self._get_next_state(action)
 
             # Apply boundary constraints
-            next_coord.x = max(0, min(next_coord.x, self.registry.grid_size - 1))
-            next_coord.y = max(0, min(next_coord.y, self.registry.grid_size - 1))
+            next_position.x = max(0, min(next_position.x, self.registry.grid_size - 1))
+            next_position.y = max(0, min(next_position.y, self.registry.grid_size - 1))
 
             # if the move is effectively STAY, then don't add it.
             if (
-                next_coord.x == self.coord.x
-                and next_coord.y == self.coord.y
+                next_position.x == self.position.x
+                and next_position.y == self.position.y
                 and next_direction == self.direction
             ):
                 continue
 
             # Create the next node (will use existing one if it exists)
-            next_node = self.registry.get_or_create_node(next_coord, next_direction)
+            next_node = self.registry.get_or_create_node(next_position, next_direction)
             self.children[action] = next_node
 
     def __str__(self):
-        return f"({self.coord} {self.direction})"
+        return f"({self.position} {self.direction})"
 
     def __repr__(self):
         return self.__str__()
 
     def __hash__(self) -> int:
-        return get_hash(self.coord, self.direction)
+        return get_hash(self.position, self.direction)
 
-    def is_same_state(self, coord, direction):
+    def is_same_state(self, position, direction):
         """Check if this node has the same state (position and direction)"""
-        return self.coord == coord and self.direction == direction
+        return self.position == position and self.direction == direction

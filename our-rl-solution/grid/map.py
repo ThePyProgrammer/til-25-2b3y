@@ -38,7 +38,7 @@ class Map:
                 for direction in Direction:
                     self.registry.get_or_create_node(Point(x, y), direction)
 
-    def get_node(self, coord: Point, direction: Direction) -> DirectionalNode:
+    def get_node(self, position: Point, direction: Direction) -> DirectionalNode:
         """
         Get a node from the registry.
 
@@ -49,7 +49,7 @@ class Map:
         Returns:
             DirectionalNode: The node at the specified position and direction
         """
-        return self.registry.get_or_create_node(coord, direction)
+        return self.registry.get_or_create_node(position, direction)
 
     def __call__(self, observation):
         """Update the map with a new observation."""
