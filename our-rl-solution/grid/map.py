@@ -8,7 +8,8 @@ from .utils import (
     rotate_wall_bits,
     view_to_world
 )
-from .tree import NodeRegistry, DirectionalNode, TrajectoryTree
+from .node import NodeRegistry, DirectionalNode
+from .trajectory import TrajectoryTree
 
 
 class Map:
