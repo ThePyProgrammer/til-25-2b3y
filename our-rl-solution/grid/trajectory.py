@@ -6,6 +6,7 @@ from .node import NodeRegistry, DirectionalNode
 class Trajectory:
     def __init__(self, root_node):
         self.root: DirectionalNode = root_node
+        self.last: Optional[DirectionalNode] = None
         self.route: list[Action] = []
         self.nodes: list[DirectionalNode] = [self.root]
 
@@ -29,6 +30,7 @@ class Trajectory:
         new_trajectory = Trajectory(self.root)
         new_trajectory.route = self.route[:]
         new_trajectory.nodes = self.nodes[:]
+        new_trajectory.last = self.last
         # Set up inheritance relationship
         new_trajectory._inherited_from = self
         self._inherits_to.append(new_trajectory)
@@ -42,9 +44,7 @@ class Trajectory:
         self.route.append(action)
 
         # Check if this action is valid
-        current_node = self.get_last_node()
-        if current_node and action not in current_node.children:
-            self.mark_as_invalid()
+        self.get_last_node()
 
     def mark_as_invalid(self, invalid_action_idx: Optional[int] = None):
         """
@@ -54,6 +54,7 @@ class Trajectory:
             invalid_action_idx: The index of the action in the route that is invalid.
                                 If None, the entire trajectory is marked invalid.
         """
+        print(invalid_action_idx)
         # avoid propagating if already done.
         if self.invalid:
             return
@@ -86,7 +87,9 @@ class Trajectory:
         if self.invalid:
             return None
 
-        populate_nodes = len(self.nodes) <= len(self.route)
+        populate_nodes = (len(self.nodes) - 1) != len(self.route)
+        if populate_nodes:
+            self.nodes = [self.root]
 
         current_node = self.root
         for i, action in enumerate(self.route):
@@ -98,6 +101,8 @@ class Trajectory:
 
             if populate_nodes:
                 self.nodes.append(current_node)
+
+        self.last = current_node
         return current_node
 
     def get_new_trajectories(self, expansion_cache=None) -> list['Trajectory']:
@@ -179,7 +184,7 @@ class Trajectory:
         status = "INVALID" if self.invalid else "VALID"
         invalid_info = f", Invalid at action {self.invalid_action_idx}" if self.invalid and self.invalid_action_idx is not None else ""
 
-        route_str = " ".join([str(action) for action in self.nodes]) if self.nodes else ""
+        route_str = " ".join([f"{action} {node}" for node, action in zip(self.nodes[1:], self.route)]) if self.nodes else ""
 
         return f"Trajectory({status}{invalid_info}): {self.root} {route_str}"
 

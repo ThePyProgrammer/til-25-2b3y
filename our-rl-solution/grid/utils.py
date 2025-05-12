@@ -20,6 +20,8 @@ class Direction(IntEnum):
 
         return DIRECTION_ICONS[self]
 
+    def __repr__(self):
+        return self.__str__()
 
 class Action(IntEnum):
     """Action enum with values matching the environment."""
@@ -28,6 +30,19 @@ class Action(IntEnum):
     LEFT = 2
     RIGHT = 3
     STAY = 4
+
+    def __str__(self):
+        ACTION_ICONS = {
+            Action.FORWARD: "↑",
+            Action.BACKWARD: "↓",
+            Action.LEFT: "↺",
+            Action.RIGHT: "↻",
+            Action.STAY: "⊙"
+        }
+        return ACTION_ICONS[self]
+
+    def __repr__(self):
+        return self.__str__()
 
 
 class Wall:
