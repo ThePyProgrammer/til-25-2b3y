@@ -1,47 +1,38 @@
-from dataclasses import dataclass
 from typing import Optional
 
-import numpy as np
-from enum import IntEnum
-from .map import Map, Direction
+from .utils import Direction, Action, Point, get_hash
 
-class Action(IntEnum):
-    """Action enum with values matching the environment."""
-    FORWARD = 0
-    BACKWARD = 1
-    LEFT = 2
-    RIGHT = 3
-    STAY = 4
+class NodeRegistry:
+    """Registry that manages DirectionalNode instances to ensure uniqueness."""
 
-@dataclass
-class Point:
-    x: int
-    y: int
+    def __init__(self, grid_size: int = 16):
+        """Initialize a new registry with specified grid size."""
+        self.grid_size = grid_size
+        self.nodes: dict[int, 'DirectionalNode'] = {}
 
-    def __eq__(self, other):
-        if not isinstance(other, Point):
-            return False
-        return self.x == other.x and self.y == other.y
+    def get_or_create_node(self, coord: Point, direction: Direction) -> 'DirectionalNode':
+        """Get an existing node from the registry or create a new one if it doesn't exist."""
+        node_hash = get_hash(coord, direction)
 
-    def __hash__(self):
-        return hash((self.x, self.y))
+        # Check if we already have a node with this hash
+        if node_hash in self.nodes:
+            return self.nodes[node_hash]
 
-    def __str__(self):
-        return f"({self.x}, {self.y})"
-
-    def __repr__(self):
-        return self.__str__()
-
-def get_hash(x, y, direction):
-    return hash(f"{x}-{y}-{direction}")
+        # Create a new instance if it doesn't exist
+        node = DirectionalNode(coord, direction, self)
+        self.nodes[node_hash] = node
+        return node
 
 class DirectionalNode:
     """A node in the path tree that tracks both position and direction."""
 
-    def __init__(self, coord: Point, direction: Direction):
+    def __init__(self, coord: Point, direction: Direction, registry: NodeRegistry):
         self.coord = coord
         self.direction = direction
+        self.registry = registry
         self.children: dict[Action, 'DirectionalNode'] = {}
+        # Populate children on first initialization
+        self._populate_children()
 
     def _get_next_state(self, action: Action):
         """
@@ -106,13 +97,10 @@ class DirectionalNode:
 
         return next_coord, next_direction
 
-    def populate_possible_children(self, node_lookup_table: 'DirectionalNodeTable'):
+    def _populate_children(self):
         """
         Populate the children dictionary with nodes that can be reached from this node.
         Does NOT take into account walls so those actions will have to be pruned.
-
-        Args:
-            node_lookup_table: Table containing all possible nodes in the environment
         """
         self.children = {}
 
@@ -121,8 +109,8 @@ class DirectionalNode:
             next_coord, next_direction = self._get_next_state(action)
 
             # Apply boundary constraints
-            next_coord.x = max(0, min(next_coord.x, node_lookup_table.size - 1))
-            next_coord.y = max(0, min(next_coord.y, node_lookup_table.size - 1))
+            next_coord.x = max(0, min(next_coord.x, self.registry.grid_size - 1))
+            next_coord.y = max(0, min(next_coord.y, self.registry.grid_size - 1))
 
             # if the move is effectively STAY, then don't add it.
             if (
@@ -132,12 +120,9 @@ class DirectionalNode:
             ):
                 continue
 
-            # Look up the next node in the table
-            node_hash = get_hash(next_coord.x, next_coord.y, next_direction)
-            next_node = node_lookup_table.nodes.get(node_hash)
-
-            if next_node:
-                self.children[action] = next_node
+            # Create the next node (will use existing one if it exists)
+            next_node = self.registry.get_or_create_node(next_coord, next_direction)
+            self.children[action] = next_node
 
     def __str__(self):
         dir_names = {
@@ -146,40 +131,17 @@ class DirectionalNode:
             Direction.LEFT: "←",
             Direction.UP: "↑"
         }
-        return f"{self.coord} {dir_names[self.direction]})"
+        return f"({self.coord} {dir_names[self.direction]})"
 
     def __repr__(self):
         return self.__str__()
 
     def __hash__(self) -> int:
-        return get_hash(self.coord.x, self.coord.y, self.direction)
+        return get_hash(self.coord, self.direction)
 
     def is_same_state(self, coord, direction):
         """Check if this node has the same state (position and direction)"""
         return self.coord == coord and self.direction == direction
-
-class DirectionalNodeTable:
-    def __init__(self, size: int = 16):
-        self.size = size
-        self.nodes: dict[int, DirectionalNode] = {}
-
-        # Create nodes for all positions and directions
-        for i in range(self.size):
-            for j in range(self.size):
-                for d in Direction:
-                    node = DirectionalNode(Point(i, j), d)
-                    self.nodes[hash(node)] = node
-
-    def __getitem__(self, key):
-        """Get a node by coord and direction tuple."""
-        if isinstance(key, tuple) and len(key) == 2:
-            coord, direction = key
-            return self.get_node(coord, direction)
-        raise KeyError("Expected a tuple of (coord, direction)")
-
-    def get_node(self, coord: Point, direction: Direction):
-        """Get a node by separate coord and direction arguments."""
-        return self.nodes[get_hash(coord.x, coord.y, direction)]
 
 class Trajectory:
     def __init__(self, root_node):
@@ -292,7 +254,7 @@ class Trajectory:
         return new_trajectories
 
 class TrajectoryTree:
-    def __init__(self, init_coord: Point, init_direction: Direction = Direction.RIGHT, size: int = 16):
+    def __init__(self, init_coord: Point, init_direction: Optional[Direction] = None, size: int = 16):
         """
         Initialize a TrajectoryTree with the agent's starting position and direction.
 
@@ -302,112 +264,51 @@ class TrajectoryTree:
             size: Size of the grid environment (default: 16)
         """
         self.size = size
-        self.node_lookup_table: DirectionalNodeTable = DirectionalNodeTable(size)
+        # Create a node registry for this trajectory tree
+        self.registry = NodeRegistry(size)
 
-        # Initialize the node lookup table by populating children for each node
-        for node in self.node_lookup_table.nodes.values():
-            node.populate_possible_children(self.node_lookup_table)
+        # Initialize the starting trajectories
+        possible_init_directions: list[Direction] = []
 
-        # Create the root node
-        self.root_node = self.node_lookup_table.get_node(init_coord, init_direction)
+        if init_direction is not None:
+            possible_init_directions.append(init_direction)
+        else:
+            possible_init_directions.extend([d for d in Direction])
 
-        # Initialize with a single trajectory starting from the root
-        self.trajectories: list[Trajectory] = [Trajectory(self.root_node)]
+        self.trajectories: list[Trajectory] = []
+        for direction in possible_init_directions:
+            # This will either create a new node or use an existing one
+            root_node = self.registry.get_or_create_node(init_coord, direction)
+            self.trajectories.append(Trajectory(root_node))
 
-    # def expand_trajectories(self, max_depth: int = None):
-    #     """
-    #     Expand all trajectories to generate new possible paths.
+    def step(self):
+        """
+        Expand all valid trajectories by one step.
 
-    #     Args:
-    #         max_depth: Maximum depth/length of trajectories to consider (None for unlimited)
+        Returns:
+            Number of new trajectories added
+        """
+        if not self.trajectories:
+            return 0
 
-    #     Returns:
-    #         Number of new trajectories added
-    #     """
-    #     if not self.trajectories:
-    #         return 0
+        new_trajectories = []
+        current_trajectories = self.trajectories.copy()
+        self.trajectories = []
 
-    #     new_trajectories = []
-    #     for traj in self.trajectories:
-    #         # Skip trajectories that have reached max depth
-    #         if max_depth is not None and len(traj.route) >= max_depth:
-    #             continue
+        for traj in current_trajectories:
+            # Skip invalid trajectories
+            if traj.invalid:
+                continue
 
-    #         # Generate new trajectories from this one
-    #         new_trajs = traj.get_new_trajectories()
-    #         new_trajectories.extend(new_trajs)
+            # Generate new trajectories from this one
+            expanded_trajectories = traj.get_new_trajectories()
 
-    #     # Store the new trajectories
-    #     self.trajectories.extend(new_trajectories)
-    #     return len(new_trajectories)
+            if expanded_trajectories:
+                new_trajectories.extend(expanded_trajectories)
+            else:
+                # Keep trajectories that can't be expanded (terminal nodes)
+                self.trajectories.append(traj)
 
-    # def get_terminal_nodes(self):
-    #     """
-    #     Get nodes that have no children (dead ends).
-
-    #     Returns:
-    #         List of DirectionalNodes that are terminal
-    #     """
-    #     terminal_nodes = []
-    #     for node in self.node_lookup_table.nodes.values():
-    #         if not node.children:
-    #             terminal_nodes.append(node)
-    #     return terminal_nodes
-
-    # def find_trajectory_to(self, target_coord: Point, max_steps: int = 20):
-    #     """
-    #     Find a trajectory that reaches the target position.
-
-    #     Args:
-    #         target_coord: The target position to reach
-    #         max_steps: Maximum number of steps to try before giving up
-
-    #     Returns:
-    #         Trajectory that reaches target, or None if not found
-    #     """
-    #     # Reset trajectories to just the starting point
-    #     self.trajectories = [Trajectory(self.root_node)]
-
-    #     for _ in range(max_steps):
-    #         # Expand all trajectories
-    #         new_count = self.expand_trajectories()
-    #         if new_count == 0:
-    #             # No more possible expansions
-    #             break
-
-    #         # Check if any trajectory reaches the target
-    #         for traj in self.trajectories:
-    #             if traj.invalid:
-    #                 continue
-
-    #             # Get the last node in this trajectory
-    #             current_node = traj.get_last_node()
-    #             if not current_node:
-    #                 continue
-
-    #             # Check if we've reached the target
-    #             if current_node.coord == target_coord:
-    #                 return traj
-
-    #     return None
-
-    # def get_shortest_trajectory(self, target_coords: list[Point]):
-    #     """
-    #     Find the shortest trajectory to any of the target coordinates.
-
-    #     Args:
-    #         target_coords: List of target coordinates to consider
-
-    #     Returns:
-    #         Shortest trajectory to any target, or None if none found
-    #     """
-    #     best_traj = None
-    #     best_length = float('inf')
-
-    #     for target in target_coords:
-    #         traj = self.find_trajectory_to(target)
-    #         if traj and not traj.invalid and len(traj.route) < best_length:
-    #             best_traj = traj
-    #             best_length = len(traj.route)
-
-    #     return best_traj
+        # Store the new trajectories
+        self.trajectories.extend(new_trajectories)
+        return len(new_trajectories)

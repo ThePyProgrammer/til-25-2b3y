@@ -1,107 +1,14 @@
 import numpy as np
-from enum import IntEnum
 
-
-class Direction(IntEnum):
-    """Direction enum with values matching the environment."""
-    RIGHT = 0
-    DOWN = 1
-    LEFT = 2
-    UP = 3
-
-
-class Wall:
-    """Wall bit positions."""
-    RIGHT = 4  # Bit 4, value 16
-    BOTTOM = 5  # Bit 5, value 32
-    LEFT = 6   # Bit 6, value 64
-    TOP = 7    # Bit 7, value 128
-
-
-def rotate_wall_bits(tile_value, direction):
-    """
-    Rotates the wall bits based on the agent's direction to maintain global orientation.
-
-    Args:
-        tile_value (int): The observed tile value
-        direction (int): Direction the agent is facing (0-3)
-
-    Returns:
-        int: Tile value with rotated wall bits
-    """
-    # Extract different parts of the tile value
-    item_bits = tile_value & 0b11  # Last 2 bits (tile type)
-    agent_bits = tile_value & 0b1100  # Bits 2-3 (agent type)
-    wall_bits = tile_value & 0b11110000  # Bits 4-7 (walls)
-
-    if direction == Direction.RIGHT:
-        # No rotation needed for RIGHT direction (0)
-        return tile_value
-
-    # Extract individual wall bits
-    right_wall = 1 if wall_bits & (1 << Wall.RIGHT) else 0
-    bottom_wall = 1 if wall_bits & (1 << Wall.BOTTOM) else 0
-    left_wall = 1 if wall_bits & (1 << Wall.LEFT) else 0
-    top_wall = 1 if wall_bits & (1 << Wall.TOP) else 0
-
-    # Initialize rotated walls
-    rotated_right = right_wall
-    rotated_bottom = bottom_wall
-    rotated_left = left_wall
-    rotated_top = top_wall
-
-    if direction == Direction.DOWN:
-        # Rotate clockwise once
-        rotated_right = top_wall
-        rotated_bottom = right_wall
-        rotated_left = bottom_wall
-        rotated_top = left_wall
-    elif direction == Direction.LEFT:
-        # Rotate clockwise twice
-        rotated_right = left_wall
-        rotated_bottom = top_wall
-        rotated_left = right_wall
-        rotated_top = bottom_wall
-    elif direction == Direction.UP:
-        # Rotate clockwise three times
-        rotated_right = bottom_wall
-        rotated_bottom = left_wall
-        rotated_left = top_wall
-        rotated_top = right_wall
-
-    # Combine the rotated wall bits with the original agent and item bits
-    rotated_wall_bits = (
-        (rotated_right << Wall.RIGHT) |
-        (rotated_bottom << Wall.BOTTOM) |
-        (rotated_left << Wall.LEFT) |
-        (rotated_top << Wall.TOP)
-    )
-
-    return item_bits | agent_bits | rotated_wall_bits
-
-
-def view_to_world(agent_loc, agent_dir, view_coord):
-    """
-    Maps viewcone coordinate to world coordinate
-
-    Args:
-        agent_loc (np.ndarray): Agent's location in world coordinates
-        agent_dir (int): Direction the agent is facing (0-3)
-        view_coord (np.ndarray): Viewcone coordinate relative to agent
-
-    Returns:
-        np.ndarray: World coordinate
-    """
-    agent_dir = Direction(agent_dir)
-
-    if agent_dir == Direction.RIGHT:
-        return agent_loc + view_coord
-    elif agent_dir == Direction.DOWN:
-        return agent_loc - np.array((view_coord[1], -view_coord[0]))
-    elif agent_dir == Direction.LEFT:
-        return agent_loc - view_coord
-    else:  # Direction.UP
-        return agent_loc + np.array((view_coord[1], -view_coord[0]))
+from .utils import (
+    Direction,
+    Wall,
+    Action,
+    Point,
+    rotate_wall_bits,
+    view_to_world
+)
+from .tree import NodeRegistry, DirectionalNode, TrajectoryTree
 
 
 class Map:
@@ -117,6 +24,31 @@ class Map:
         self.visited = np.zeros((self.size, self.size), dtype=bool)
         self.last_updated = np.zeros((self.size, self.size), dtype=np.int32)  # Timestamp for last update
         self.step_counter = 0  # Count of steps/updates to use as timestamp
+
+        # Initialize node registry and populate nodes
+        self.registry = NodeRegistry(self.size)
+        self._populate_nodes()
+
+    def _populate_nodes(self):
+        """Populate all possible nodes in the grid (assuming no walls)."""
+        # Create nodes for all positions and directions
+        for y in range(self.size):
+            for x in range(self.size):
+                for direction in Direction:
+                    self.registry.get_or_create_node(Point(x, y), direction)
+
+    def get_node(self, coord: Point, direction: Direction) -> DirectionalNode:
+        """
+        Get a node from the registry.
+
+        Args:
+            x, y: Coordinates of the position
+            direction: Direction the agent is facing
+
+        Returns:
+            DirectionalNode: The node at the specified position and direction
+        """
+        return self.registry.get_or_create_node(coord, direction)
 
     def __call__(self, observation):
         """Update the map with a new observation."""
@@ -137,6 +69,9 @@ class Map:
 
         # Increment step counter
         self.step_counter += 1
+
+        # Track which cells have wall updates
+        updated_cells = []
 
         # Viewcone is 7x5 with agent at (2, 2)
         for i in range(viewcone.shape[0]):
@@ -163,16 +98,26 @@ class Map:
                 if (0 <= x < self.size and 0 <= y < self.size and tile_value != 0):
                     # Rotate the wall bits to maintain global orientation
                     rotated_tile_value = rotate_wall_bits(tile_value, direction)
-                    
+
                     # Clear agent bits when processing the agent's own position in viewcone
                     if i == 2 and j == 2:
                         # Clear bits 2-3 (agent bits) but keep all other bits
                         rotated_tile_value = rotated_tile_value & ~0b1100
 
+                    # Check if wall information has changed
+                    old_value = self.map[x, y]
+                    if old_value != rotated_tile_value:
+                        # Wall configuration might have changed
+                        updated_cells.append((x, y, rotated_tile_value))
+
                     # Update map with tile information
                     self.map[x, y] = rotated_tile_value
                     self.visited[x, y] = True
                     self.last_updated[x, y] = self.step_counter  # Record when this cell was updated
+
+        # Update node connections for cells with updated wall information
+        for x, y, tile_value in updated_cells:
+            self._update_node_connections(x, y, tile_value)
 
         return self.map
 
@@ -263,3 +208,92 @@ class Map:
         result[mask] = self.step_counter - self.last_updated[mask]
 
         return result
+
+    def _update_node_connections(self, x, y, tile_value):
+        """
+        Update node connections based on wall information.
+
+        Args:
+            x, y: Coordinates of the updated cell
+            tile_value: Updated tile value containing wall information
+        """
+        # Extract wall information as a dictionary for easier access
+        walls = {
+            'right': (tile_value & (1 << Wall.RIGHT)) > 0,
+            'bottom': (tile_value & (1 << Wall.BOTTOM)) > 0,
+            'left': (tile_value & (1 << Wall.LEFT)) > 0,
+            'top': (tile_value & (1 << Wall.TOP)) > 0
+        }
+
+        position = Point(x, y)
+
+        # Define a mapping from direction + action to the wall that would block it
+        # Format: {direction: {action: wall_location}}
+        blocking_walls = {
+            Direction.RIGHT: {
+                Action.FORWARD: 'right',
+                Action.BACKWARD: 'left',
+                Action.LEFT: 'top',
+                Action.RIGHT: 'bottom'
+            },
+            Direction.DOWN: {
+                Action.FORWARD: 'bottom',
+                Action.BACKWARD: 'top',
+                Action.LEFT: 'right',
+                Action.RIGHT: 'left'
+            },
+            Direction.LEFT: {
+                Action.FORWARD: 'left',
+                Action.BACKWARD: 'right',
+                Action.LEFT: 'bottom',
+                Action.RIGHT: 'top'
+            },
+            Direction.UP: {
+                Action.FORWARD: 'top',
+                Action.BACKWARD: 'bottom',
+                Action.LEFT: 'left',
+                Action.RIGHT: 'right'
+            }
+        }
+
+        # Update each directional node at this position
+        for direction in Direction:
+            node = self.registry.get_or_create_node(position, direction)
+
+            # Determine which actions are blocked by walls
+            invalid_actions = []
+
+            # Check each action
+            for action in [Action.FORWARD, Action.BACKWARD, Action.LEFT, Action.RIGHT]:
+                # Get the wall location that would block this action from this direction
+                wall_location = blocking_walls[direction][action]
+
+                # If there's a wall in that location and the action exists in node children
+                if walls[wall_location] and action in node.children:
+                    invalid_actions.append(action)
+
+            # Remove invalid actions from node children
+            for action in invalid_actions:
+                if action in node.children:
+                    del node.children[action]
+
+    def get_trajectory_tree(self, position, direction=None):
+        """
+        Create a trajectory tree starting from a specific position and direction.
+
+        Args:
+            position: Tuple (x, y) or Point representing the starting position
+            direction: Optional starting direction (if None, will create trees for all directions)
+
+        Returns:
+            TrajectoryTree: A trajectory tree populated with valid paths
+        """
+        # Convert tuple to Point if necessary
+        if isinstance(position, tuple):
+            position = Point(position[0], position[1])
+
+        # Create a trajectory tree with the current map's registry
+        tree = TrajectoryTree(position, direction, self.size)
+        tree.registry = self.registry  # Use the map's registry with wall information
+
+        return tree
