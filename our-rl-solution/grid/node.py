@@ -123,13 +123,7 @@ class DirectionalNode:
             self.children[action] = next_node
 
     def __str__(self):
-        dir_names = {
-            Direction.RIGHT: "→",
-            Direction.DOWN: "↓",
-            Direction.LEFT: "←",
-            Direction.UP: "↑"
-        }
-        return f"({self.coord} {dir_names[self.direction]})"
+        return f"({self.coord} {self.direction})"
 
     def __repr__(self):
         return self.__str__()

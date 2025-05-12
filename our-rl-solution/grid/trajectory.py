@@ -7,6 +7,7 @@ class Trajectory:
     def __init__(self, root_node):
         self.root: DirectionalNode = root_node
         self.route: list[Action] = []
+        self.nodes: list[DirectionalNode] = [self.root]
 
         self.invalid: bool = False
         self.invalid_action_idx: Optional[int] = None
@@ -14,10 +15,14 @@ class Trajectory:
         self._inherited_from: Optional['Trajectory'] = None
         self._inherits_to: list['Trajectory'] = []
 
+    def __hash__(self):
+        return hash(tuple(self.nodes))
+
     def copy(self):
-        """Create a copy of this trajectory with the same root but a new route list."""
+        """Create a deep copy of this trajectory with the same root but new lists."""
         new_trajectory = Trajectory(self.root)
-        new_trajectory.route = self.route.copy()
+        new_trajectory.route = self.route[:]
+        new_trajectory.nodes = self.nodes[:]
         # Set up inheritance relationship
         new_trajectory._inherited_from = self
         self._inherits_to.append(new_trajectory)
@@ -75,6 +80,8 @@ class Trajectory:
         if self.invalid:
             return None
 
+        populate_nodes = len(self.nodes) <= len(self.route)
+
         current_node = self.root
         for i, action in enumerate(self.route):
             if action in current_node.children:
@@ -82,6 +89,9 @@ class Trajectory:
             else:
                 self.mark_as_invalid(i)  # Mark invalid at the specific action index
                 return None
+
+            if populate_nodes:
+                self.nodes.append(current_node)
         return current_node
 
     def get_new_trajectories(self) -> list['Trajectory']:
@@ -113,6 +123,17 @@ class Trajectory:
 
         return new_trajectories
 
+    def __str__(self):
+        status = "INVALID" if self.invalid else "VALID"
+        invalid_info = f", Invalid at action {self.invalid_action_idx}" if self.invalid and self.invalid_action_idx is not None else ""
+
+        route_str = " ".join([str(action) for action in self.nodes]) if self.nodes else ""
+
+        return f"Trajectory({status}{invalid_info}): {self.root} {route_str}"
+
+    def __repr__(self):
+        return self.__str__()
+
 class TrajectoryTree:
     def __init__(self, init_coord: Point, init_direction: Optional[Direction] = None, size: int = 16):
         """
@@ -140,8 +161,9 @@ class TrajectoryTree:
             # This will either create a new node or use an existing one
             root_node = self.registry.get_or_create_node(init_coord, direction)
             self.trajectories.append(Trajectory(root_node))
+        self.edge_trajectories: list[Trajectory] = self.trajectories
 
-    def step(self):
+    def step(self) -> int:
         """
         Expand all valid trajectories by one step.
 
@@ -151,11 +173,12 @@ class TrajectoryTree:
         if not self.trajectories:
             return 0
 
-        new_trajectories = []
-        current_trajectories = self.trajectories.copy()
-        self.trajectories = []
+        before_len = len(self.trajectories)
 
-        for traj in current_trajectories:
+        old_edge_trajectories = self.edge_trajectories
+        new_trajectories = []
+
+        for traj in old_edge_trajectories:
             # Skip invalid trajectories
             if traj.invalid:
                 continue
@@ -165,10 +188,14 @@ class TrajectoryTree:
 
             if expanded_trajectories:
                 new_trajectories.extend(expanded_trajectories)
-            else:
-                # Keep trajectories that can't be expanded (terminal nodes)
-                self.trajectories.append(traj)
 
-        # Store the new trajectories
+        self.edge_trajectories = new_trajectories
         self.trajectories.extend(new_trajectories)
-        return len(new_trajectories)
+        self.deduplicate()
+
+        after_len = len(self.trajectories)
+
+        return after_len - before_len
+
+    def deduplicate(self):
+        self.trajectories = list(set(self.trajectories))

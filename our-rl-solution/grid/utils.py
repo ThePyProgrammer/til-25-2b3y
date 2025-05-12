@@ -10,6 +10,16 @@ class Direction(IntEnum):
     LEFT = 2
     UP = 3
 
+    def __str__(self):
+        DIRECTION_ICONS = {
+            Direction.RIGHT: "→",
+            Direction.DOWN: "↓",
+            Direction.LEFT: "←",
+            Direction.UP: "↑"
+        }
+        
+        return DIRECTION_ICONS[self]
+
 
 class Action(IntEnum):
     """Action enum with values matching the environment."""
