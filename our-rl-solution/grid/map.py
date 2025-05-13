@@ -21,14 +21,20 @@ class Map:
     RECON = TileContent.RECON
     MISSION = TileContent.MISSION
 
-    def __init__(self):
-        """Initialize an empty map of the environment."""
+    def __init__(self, use_viewcone=False):
+        """
+        Initialize an empty map of the environment.
+
+        Args:
+            use_viewcone: Whether to use viewcone for action selection (default: True)
+        """
         self.size = 16  # Assume a 16x16 environment
         self.map = np.zeros((self.size, self.size), dtype=np.uint8)
         self.viewed = np.zeros((self.size, self.size), dtype=bool)
         self.last_updated = np.zeros((self.size, self.size), dtype=np.int32)  # Timestamp for last update
         self.recently_updated = np.zeros((self.size, self.size), dtype=np.uint8)
         self.step_counter = 0  # Count of steps/updates to use as timestamp
+        self.use_viewcone = use_viewcone  # Feature flag for viewcone-based action selection
 
         self.registry = NodeRegistry(self.size)
         self._populate_nodes()
@@ -341,8 +347,8 @@ class Map:
 
     def get_optimal_action(self, position: Point, direction: Direction, tree_index: int = 0) -> Action:
         """
-        Get the optimal action to take from the current position and direction
-        to reach the highest reward in the shortest path.
+        Get the optimal action to take from the current position and direction.
+        Prioritizes seeing tiles with high probability densities, then reaching reward positions.
 
         Args:
             position: Current position of the agent
@@ -361,19 +367,45 @@ class Map:
         # Find positions with rewards
         reward_positions = self._find_reward_positions(tree)
 
-        # If no rewards found, return a default action
+        # If no rewards found, return an action that maximizes visibility of high probability areas
         if not reward_positions:
+            # Try all possible actions and choose the one with best view
+            candidate_actions = []
+            for action in Action:
+                if action in start_node.children:
+                    child_node = start_node.children[action]
+                    candidate_actions.append((action, child_node))
+
+            if candidate_actions:
+                if self.use_viewcone:
+                    return self._select_action_for_best_view(candidate_actions, tree.probability_density)
+                else:
+                    # If not using viewcone, just pick the first available action
+                    return candidate_actions[0][0]
             return self._get_default_action(start_node)
 
         # Find shortest paths to all rewards
         best_paths_to_rewards = self._find_paths_to_rewards(start_node, reward_positions)
 
-        # Choose the best action based on reward/distance ratio
-        # and maximizing field of view
-        best_action = self._select_best_action(reward_positions, best_paths_to_rewards)
+        # Choose the best action prioritizing visibility of high probability areas
+        # then considering reward/distance ratio
+        best_action = self._select_best_action(reward_positions, best_paths_to_rewards, tree.probability_density)
 
-        # If no path found to any reward, return a default action
+        # If no path found to any reward, choose action with best view
         if best_action is None:
+            # Try all possible actions and choose the one with best view
+            candidate_actions = []
+            for action in Action:
+                if action in start_node.children:
+                    child_node = start_node.children[action]
+                    candidate_actions.append((action, child_node))
+
+            if candidate_actions:
+                if self.use_viewcone:
+                    return self._select_action_for_best_view(candidate_actions, tree.probability_density)
+                else:
+                    # If not using viewcone, just pick the first available action
+                    return candidate_actions[0][0]
             return self._get_default_action(start_node)
 
         return best_action
@@ -485,46 +517,85 @@ class Map:
                 # Add to priority queue
                 heapq.heappush(pq, (new_dist, next_hash))
 
-    def _select_best_action(self, reward_positions, best_paths_to_rewards):
+    def _select_best_action(self, reward_positions, best_paths_to_rewards, probability_density):
         """
-        Selects the best action based on reward/distance ratio,
-        with a preference for directions that maximize field of view.
+        Selects the best action prioritizing visibility of tiles with high probability density,
+        then considering the reward/distance ratio.
+
+        If use_viewcone is False, only the path efficiency (reward/distance) is considered.
         """
-        best_reward_ratio = -1
-        candidate_actions = []  # Store actions with the same best ratio
+        # First, evaluate all candidate actions
+        scored_actions = []
 
         for reward_pos, reward_value in reward_positions:
             if reward_pos in best_paths_to_rewards:
                 node, distance, first_action = best_paths_to_rewards[reward_pos]
 
-                # Handle case where we're already at the reward
-                if distance == 0:
-                    ratio = float('inf')  # Highest possible ratio
-                else:
-                    ratio = reward_value / distance
+                if first_action is None:
+                    continue
 
-                # Found a better ratio
-                if ratio > best_reward_ratio and first_action is not None:
-                    best_reward_ratio = ratio
-                    candidate_actions = [(first_action, node)]
-                # Same ratio, add to candidates
-                elif ratio == best_reward_ratio and first_action is not None:
-                    candidate_actions.append((first_action, node))
+                # Calculate path efficiency score
+                if distance == 0:
+                    path_ratio = float('inf')
+                else:
+                    path_ratio = reward_value / distance
+
+                # Calculate view score if using viewcone
+                view_score = 0
+                if self.use_viewcone:
+                    view_tiles = self._get_viewcone_tiles(node.position, node.direction)
+                    view_score = self._calculate_view_score(view_tiles, probability_density)
+
+                # Store action with its scores
+                scored_actions.append((first_action, node, view_score, path_ratio))
 
         # If no candidates found, return None
-        if not candidate_actions:
+        if not scored_actions:
             return None
 
-        # If only one candidate, return it
-        if len(candidate_actions) == 1:
-            return candidate_actions[0][0]
+        # Sort actions by appropriate criteria based on use_viewcone flag
+        if self.use_viewcone:
+            # Sort by view score (primary) and path ratio (secondary)
+            scored_actions.sort(key=lambda x: (x[2], x[3]), reverse=True)
+        else:
+            # Sort only by path ratio when not using viewcone
+            scored_actions.sort(key=lambda x: x[3], reverse=True)
 
-        # Multiple candidates with same ratio, choose based on field of view
-        return self._select_action_for_best_view(candidate_actions)
+        # Return the best action
+        return scored_actions[0][0]
 
-    def _select_action_for_best_view(self, candidate_actions):
+    def _calculate_view_score(self, view_tiles, probability_density):
         """
-        Selects the action that maximizes the guard's field of view from candidate actions.
+        Calculates the view score based on probability densities and unexplored tiles in the viewcone.
+
+        Args:
+            view_tiles: List of Point objects representing positions in the viewcone
+            probability_density: 2D array of probability densities from the trajectory tree
+
+        Returns:
+            float: Score representing the exploration value of the viewcone
+        """
+        view_score = 0
+
+        # Count unexplored tiles in viewcone and weight by probability density
+        for tile_pos in view_tiles:
+            # Skip tiles outside grid boundaries
+            if (tile_pos.x < 0 or tile_pos.x >= self.size or
+                tile_pos.y < 0 or tile_pos.y >= self.size):
+                continue
+
+            # Get the probability density for this tile
+            # Note: probability_density array is indexed as [y, x]
+            prob_value = probability_density[tile_pos.y, tile_pos.x]
+
+            view_score += prob_value * 10
+
+        return view_score
+
+    def _select_action_for_best_view(self, candidate_actions, probability_density):
+        """
+        Selects the action that maximizes the guard's field of view from candidate actions,
+        prioritizing tiles with high probability density.
 
         The guard's viewcone is shaped like:
         - 4 tiles forward
@@ -533,33 +604,20 @@ class Map:
 
         Args:
             candidate_actions: List of tuples (action, resulting_node) with same reward/distance ratio
+            probability_density: 2D array of probability densities from the trajectory tree
 
         Returns:
-            Action: The action that maximizes field of view
+            Action: The action that maximizes view of high probability areas
         """
         best_action = candidate_actions[0][0]  # Default to first action
         max_view_score = -1
 
-        # tile_types = self.get_tile_type()
-
         for action, node in candidate_actions:
-            # Calculate view score based on the resulting direction
-            # Higher score = more unexplored tiles in view cone
-            view_score = 0
-
             # Get all tiles in the potential view cone
             view_tiles = self._get_viewcone_tiles(node.position, node.direction)
 
-            # Count unexplored/reward tiles in viewcone
-            for tile_pos in view_tiles:
-                # Skip tiles outside grid boundaries
-                if (tile_pos.x < 0 or tile_pos.x >= self.size or
-                    tile_pos.y < 0 or tile_pos.y >= self.size):
-                    continue
-
-                # Check if tile has been visited
-                if not self.viewed[tile_pos.x][tile_pos.y]:
-                    view_score += 1
+            # Calculate view score considering probability density
+            view_score = self._calculate_view_score(view_tiles, probability_density)
 
             # Update best action if better view score found
             if view_score > max_view_score:
@@ -584,7 +642,7 @@ class Map:
             List of Point objects representing tile positions in the viewcone
         """
         viewcone_tiles = []
-        
+
         # Define direction vectors for each direction
         direction_vectors = {
             Direction.RIGHT: (1, 0),
@@ -592,33 +650,33 @@ class Map:
             Direction.LEFT: (-1, 0),
             Direction.UP: (0, -1)
         }
-        
+
         # Get the direction vector for the current direction
         dx, dy = direction_vectors[direction]
-        
+
         # Forward section: 4 tiles in the facing direction
         for i in range(1, 5):
             viewcone_tiles.append(Point(position.x + i * dx, position.y + i * dy))
-        
+
         # Left and right sections (perpendicular to the direction)
         # For horizontal directions (RIGHT, LEFT), left/right means up/down
         # For vertical directions (DOWN, UP), left/right means left/right
         perpendicular_dx, perpendicular_dy = -dy, dx  # Rotate 90 degrees
-        
+
         # Side tiles (left and right of forward direction)
         for side in range(-2, 3):
             if side == 0:
                 continue  # Skip center line (handled in forward section)
-            
+
             # Add tiles in a line perpendicular to the direction
             for fwd in range(0, 3):
                 # Calculate the position: start + forward_component + side_component
                 x = position.x + fwd * dx + side * perpendicular_dx
                 y = position.y + fwd * dy + side * perpendicular_dy
                 viewcone_tiles.append(Point(x, y))
-        
+
         # Backward section: 2 tiles in the opposite direction
         for i in range(-2, 0):
             viewcone_tiles.append(Point(position.x + i * dx, position.y + i * dy))
-            
+
         return viewcone_tiles
