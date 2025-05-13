@@ -3,13 +3,14 @@ import pygame
 import warnings
 from enum import IntEnum
 from ..map import Map
+from ..utils import TileContent, Wall as WallEnum, int_to_tile
 
 
 class Tile(IntEnum):
-    NO_VISION = 0
-    EMPTY = 1
-    RECON = 2
-    MISSION = 3
+    NO_VISION = TileContent.NO_VISION
+    EMPTY = TileContent.EMPTY
+    RECON = TileContent.RECON
+    MISSION = TileContent.MISSION
 
     def draw(
         self,
@@ -85,10 +86,10 @@ class Player(IntEnum):
 
 
 class Wall(IntEnum):
-    RIGHT = 4  # 2**4 = 16
-    BOTTOM = 5  # 2**5 = 32
-    LEFT = 6  # 2**6 = 64
-    TOP = 7  # 2**7 = 128
+    RIGHT = WallEnum.RIGHT  # 2**4 = 16
+    BOTTOM = WallEnum.BOTTOM  # 2**5 = 32
+    LEFT = WallEnum.LEFT  # 2**6 = 64
+    TOP = WallEnum.TOP  # 2**7 = 128
 
     @property
     def orientation(self):
@@ -127,6 +128,10 @@ class Wall(IntEnum):
 def get_bit(value, bit_position):
     """Helper function to check if a bit is set at a specific position."""
     return (value & (1 << bit_position)) > 0
+    
+def get_tile_obj(value):
+    """Convert an integer value to a Tile instance for easier property access."""
+    return int_to_tile(value)
 
 
 class MapVisualizer:
@@ -162,7 +167,7 @@ class MapVisualizer:
         self,
         max_x: int,
         max_y: int,
-        square_size: int,
+        square_size: float,
         x_corner: int = 0,
         y_corner: int = 0,
         width: int = 3,
@@ -232,22 +237,30 @@ class MapVisualizer:
         for x, y in np.ndindex((self.map.size, self.map.size)):
             if not visited[x, y]:
                 continue
+            
+            # Get tile object from raw value for easier property access
+            tile_obj = get_tile_obj(self.map.map[x, y])
                 
             # Draw the tile type
             tile_type = tile_types[x, y]
             if tile_type > 0:  # Skip NO_VISION
-                Tile(tile_type).draw(self.window, x, y, pix_square_size)
+                Tile(tile_type).draw(self.window, x, y, int(pix_square_size))
             
-            # Draw walls
-            for i, wall_enum in enumerate([Wall.RIGHT, Wall.BOTTOM, Wall.LEFT, Wall.TOP]):
-                if walls[x, y, i]:
-                    wall_enum.draw(self.window, x, y, pix_square_size)
+            # Draw walls - can use tile_obj properties but continue to use wall array for consistency
+            if walls[x, y, 0]:  # Right wall
+                Wall.RIGHT.draw(self.window, x, y, int(pix_square_size))
+            if walls[x, y, 1]:  # Bottom wall
+                Wall.BOTTOM.draw(self.window, x, y, int(pix_square_size))
+            if walls[x, y, 2]:  # Left wall
+                Wall.LEFT.draw(self.window, x, y, int(pix_square_size))
+            if walls[x, y, 3]:  # Top wall
+                Wall.TOP.draw(self.window, x, y, int(pix_square_size))
             
-            # Draw agents
+            # Draw agents - use scouts/guards arrays for consistency
             if scouts[x, y]:
-                Player.SCOUT.draw(self.window, x, y, pix_square_size)
+                Player.SCOUT.draw(self.window, x, y, int(pix_square_size))
             if guards[x, y]:
-                Player.GUARD.draw(self.window, x, y, pix_square_size)
+                Player.GUARD.draw(self.window, x, y, int(pix_square_size))
 
         # Display time since last update for each cell
         if self.font is not None:
@@ -259,7 +272,7 @@ class MapVisualizer:
                     self._draw_text(
                         f"{time_since_update[x, y]}",
                         "gray",
-                        center=center,
+                        center=(int(center[0]), int(center[1])),
                     )
 
         if human_mode:

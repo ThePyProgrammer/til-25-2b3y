@@ -2,21 +2,22 @@ import numpy as np
 
 from .utils import (
     Direction,
-    Wall,
     Action,
     Point,
     rotate_wall_bits,
-    view_to_world
+    view_to_world,
+    TileContent,
+    int_to_tile
 )
 from .node import NodeRegistry, DirectionalNode
 from .trajectory import TrajectoryTree
 
 
 class Map:
-    # Tile type constants
-    EMPTY = 1
-    RECON = 2
-    MISSION = 3
+    # Tile type constants - using TileContent enum now
+    EMPTY = TileContent.EMPTY
+    RECON = TileContent.RECON
+    MISSION = TileContent.MISSION
 
     def __init__(self):
         """Initialize an empty map of the environment."""
@@ -79,12 +80,15 @@ class Map:
             for j in range(viewcone.shape[1]):
                 tile_value = viewcone[i, j]
 
-                # Skip tiles with no vision (value 0 or last 2 bits are 0)
-                if tile_value == 0 or (tile_value & 0b11) == 0:
+                # Create a Tile instance for easy property access
+                tile = int_to_tile(tile_value)
+                
+                # Skip tiles with no vision
+                if not tile.is_visible:
                     continue
 
-                # Skip empty tiles (last 2 bits = 1)
-                if (tile_value & 0b11) == self.EMPTY:
+                # Skip empty tiles
+                if tile.tile_content == self.EMPTY:
                     continue
 
                 # Convert viewcone coordinates to world coordinates
@@ -97,7 +101,8 @@ class Map:
 
                 # Check if coordinates are within bounds
                 if (0 <= x < self.size and 0 <= y < self.size and tile_value != 0):
-                    # Rotate the wall bits to maintain global orientation
+                    # Create a Tile instance and rotate its walls to maintain global orientation
+                    tile = int_to_tile(tile_value)
                     rotated_tile_value = rotate_wall_bits(tile_value, direction)
 
                     # Clear agent bits when processing the agent's own position in viewcone
@@ -135,12 +140,12 @@ class Map:
         for y in range(self.size):
             for x in range(self.size):
                 if self.visited[y, x]:
-                    tile_value = self.map[y, x]
-                    # Extract wall bits: [right, bottom, left, top]
-                    walls[y, x, 0] = (tile_value & (1 << Wall.RIGHT)) > 0
-                    walls[y, x, 1] = (tile_value & (1 << Wall.BOTTOM)) > 0
-                    walls[y, x, 2] = (tile_value & (1 << Wall.LEFT)) > 0
-                    walls[y, x, 3] = (tile_value & (1 << Wall.TOP)) > 0
+                    # Use Tile utility to extract wall information
+                    tile = int_to_tile(self.map[y, x])
+                    walls[y, x, 0] = tile.has_right_wall
+                    walls[y, x, 1] = tile.has_bottom_wall
+                    walls[y, x, 2] = tile.has_left_wall
+                    walls[y, x, 3] = tile.has_top_wall
 
         return walls
 
@@ -156,8 +161,9 @@ class Map:
         for y in range(self.size):
             for x in range(self.size):
                 if self.visited[y, x]:
-                    # Extract the last 2 bits for tile type
-                    tile_types[y, x] = self.map[y, x] & 0b11
+                    # Use Tile utility to extract tile type
+                    tile = int_to_tile(self.map[y, x])
+                    tile_types[y, x] = tile.tile_content
 
         return tile_types
 
@@ -174,11 +180,10 @@ class Map:
         for y in range(self.size):
             for x in range(self.size):
                 if self.visited[y, x]:
-                    tile_value = self.map[y, x]
-                    # Bit 2 for scouts
-                    scouts[y, x] = (tile_value & (1 << 2)) > 0
-                    # Bit 3 for guards
-                    guards[y, x] = (tile_value & (1 << 3)) > 0
+                    # Use Tile utility to extract agent information
+                    tile = int_to_tile(self.map[y, x])
+                    scouts[y, x] = tile.has_scout
+                    guards[y, x] = tile.has_guard
 
         return scouts, guards
 
@@ -218,16 +223,19 @@ class Map:
             x, y: Coordinates of the updated cell
             tile_value: Updated tile value containing wall information
         """
-        # Extract wall information as a dictionary for easier access
+        # Create a Tile object from the tile_value
+        tile = int_to_tile(tile_value)
+        
+        # Extract wall information from the Tile object
         walls = {
-            'right': (tile_value & (1 << Wall.RIGHT)) > 0,
-            'bottom': (tile_value & (1 << Wall.BOTTOM)) > 0,
-            'left': (tile_value & (1 << Wall.LEFT)) > 0,
-            'top': (tile_value & (1 << Wall.TOP)) > 0
+            'right': tile.has_right_wall,
+            'bottom': tile.has_bottom_wall,
+            'left': tile.has_left_wall,
+            'top': tile.has_top_wall
         }
 
         position = Point(x, y)
-
+        
         # Define a mapping from direction + action to the wall that would block it
         # Format: {direction: {action: wall_location}}
         blocking_walls = {
