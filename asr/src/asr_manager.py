@@ -46,7 +46,7 @@ class ASRManager:
                     audio_data = audio_data.astype(np.float32)
 
             # Convert to tensor
-            audio_tensor = torch.tensor(audio_data).unsqueeze(0)
+            audio_tensor = torch.tensor(audio_data)
 
             # Transcribe using the NeMo model
             transcriptions = self.asr_model.transcribe([audio_tensor])
