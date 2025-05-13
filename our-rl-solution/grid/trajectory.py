@@ -194,8 +194,55 @@ class Trajectory:
     def __repr__(self):
         return self.__str__()
 
+    @property
+    def has_backtrack(self):
+        """
+        Check if the trajectory contains a backtrack - returning to a previously
+        visited position after having left it.
+
+        Returns:
+            bool: True if there is a backtrack, False otherwise
+        """
+        if self.invalid:
+            return False
+
+        # Make sure nodes are populated
+        if self.get_last_node() is None:
+            return False
+
+        if len(self.nodes) < 3:  # Need at least 3 nodes for a backtrack
+            return False
+
+        # Get the sequence of positions
+        positions = [node.position for node in self.nodes]
+
+        # Set of positions we've seen and left
+        left_positions = set()
+
+        prev_position = positions[0]
+
+        for position in positions[1:]:
+            # If we're at a different position than before
+            if position != prev_position:
+                # Mark that we've left the previous position
+                left_positions.add(prev_position)
+
+                # If we're returning to a position we've left before
+                if position in left_positions:
+                    return True
+
+            prev_position = position
+
+        return False
+
 class TrajectoryTree:
-    def __init__(self, init_position: Point, init_direction: Optional[Direction] = None, size: int = 16, consider_direction: bool = True):
+    def __init__(
+        self,
+        init_position: Point,
+        init_direction: Optional[Direction] = None,
+        size: int = 16,
+        consider_direction: bool = True
+    ):
         """
         Initialize a TrajectoryTree with the agent's starting position and direction.
 
