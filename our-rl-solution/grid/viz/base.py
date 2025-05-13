@@ -235,11 +235,11 @@ class MapVisualizer:
                 continue
 
             # Get tile object from raw value for easier property access
-            tile_obj = UtilTile(self.map.map[x, y])
+            # tile_obj = UtilTile(self.map.map[x, y])
 
             # Draw the tile type
-            tile_type = tile_types[x, y]
-            if tile_type > 0:  # Skip NO_VISION
+            tile_type = tile_types[x][y]
+            if tile_type != TileContent.NO_VISION:  # Skip NO_VISION
                 Tile(tile_type).draw(self.window, x, y, int(pix_square_size))
 
             # Draw walls - can use tile_obj properties but continue to use wall array for consistency

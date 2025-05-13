@@ -27,7 +27,7 @@ from grid.map import Direction
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Record simulation demo and create videos')
-    parser.add_argument('--seed', type=int, default=random.randint(0, 10**10),
+    parser.add_argument('--seed', type=int, default=random.randint(0, 999999),
                         help='Random seed for environment initialization')
     parser.add_argument('--guard', type=int, default=0,
                         help='Guard number (0 for first guard, 1 for second guard, etc.)')
@@ -142,6 +142,14 @@ def main():
     # Parse arguments
     args = parse_arguments()
 
+    # Set all seeds for reproducibility
+    seed = args.seed
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+
     # Create output directories
     dirs = create_output_dirs()
 
@@ -156,7 +164,18 @@ def main():
         debug=True,
         novice=False,
     )
-    env.reset(seed=args.seed)
+    # Reset the environment with seed
+    env.reset(seed=seed)
+
+    # Create a numpy random generator with the same seed for action sampling
+    np_random = np.random.RandomState(seed)
+
+    # Seed the environment's action space once
+    try:
+        env.action_space.seed(seed)
+    except (AttributeError, TypeError):
+        # Some environments might not have this method or it might be structured differently
+        pass
 
     # Get guard agent based on guard number
     guards = [a for a in env.agents if a != env.scout]
@@ -190,6 +209,7 @@ def main():
             # Record execution time
             start_time = time.time()
             recon_map(observation)
+
             elapsed_time = time.time() - start_time
             execution_times.append(elapsed_time)
 
@@ -230,10 +250,17 @@ def main():
             direction = observation['direction']
             action = int(recon_map.get_optimal_action(Point(location[0], location[1]), Direction(direction), 0))
         else:
-            action = env.action_space(agent).sample()
+            # Use the seeded numpy random generator for deterministic sampling
+            action_space = env.action_space(agent)
+            # Sample using the consistent random state without re-seeding
+            try:
+                # Try with random_state parameter (newer gym versions)
+                action = action_space.sample(random_state=np_random)
+            except TypeError:
+                # For older gym versions, use the already seeded action space
+                action = action_space.sample()
 
         env.step(action)
-        time.sleep(0.1)  # Reduced sleep time for faster execution
 
     env.close()
 
