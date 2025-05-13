@@ -1,4 +1,7 @@
+import sys
+
 from .utils import Direction, Action, Point, get_hash
+
 
 class NodeRegistry:
     """Registry that manages DirectionalNode instances to ensure uniqueness."""
@@ -7,6 +10,7 @@ class NodeRegistry:
         """Initialize a new registry with specified grid size."""
         self.grid_size = grid_size
         self.nodes: dict[int, 'DirectionalNode'] = {}
+        sys.setrecursionlimit(1500)
 
     def get_or_create_node(self, position: Point, direction: Direction) -> 'DirectionalNode':
         """Get an existing node from the registry or create a new one if it doesn't exist."""
