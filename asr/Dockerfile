@@ -17,6 +17,12 @@ RUN apt-get update && apt-get install -y libsndfile1 ffmpeg
 # Installs your dependencies.
 RUN pip install -U pip
 
+RUN pip install huggingface-hub
+
+COPY setup.py .
+RUN mkdir ./models/ && python download_model.py --model_name nvidia/parakeet-tdt-0.6b-v2 --path ./models/
+RUN rm ./setup.py
+
 RUN pip install Cython packaging
 RUN pip install nemo_toolkit["asr"]
 
@@ -25,9 +31,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copies your source files and setup script.
-COPY setup.py .
-RUN python setup.py
-RUN rm ./setup.py
+# COPY setup.py .
+# RUN python setup.py
+# RUN rm ./setup.py
 
 COPY src .
 

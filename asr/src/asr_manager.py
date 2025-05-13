@@ -13,7 +13,8 @@ class ASRManager:
     def __init__(self):
         model_name = "nvidia/parakeet-tdt-0.6b-v2"
         print(f"Loading ASR model '{model_name}'")
-        self.asr_model = nemo_asr.models.ASRModel.from_pretrained(model_name)
+        # self.asr_model = nemo_asr.models.ASRModel.from_pretrained(model_name)
+        self.asr_model = nemo_asr.models.ASRModel.restore_from(f"./models/{model_name}.nemo")
         self.asr_model.to(torch.float16)
 
         self.max_batch_size = 16
