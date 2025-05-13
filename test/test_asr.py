@@ -49,6 +49,18 @@ def score_asr(truth: list[str], hypothesis: list[str]) -> float:
         hypothesis_transform=wer_transforms,
     )
 
+def batched(iterable, n):
+    """
+    Batch data into tuples of length n. The last batch may be shorter.
+    This is a replacement for itertools.batched which is only available in Python 3.12+
+    
+    >>> list(batched('ABCDEFG', 3))
+    [('A', 'B', 'C'), ('D', 'E', 'F'), ('G',)]
+    """
+    # Convert to iterator to ensure we can handle any iterable
+    it = iter(iterable)
+    while batch := tuple(itertools.islice(it, n)):
+        yield batch
 
 def main():
     data_dir = Path(f"/home/jupyter/{TEAM_TRACK}/asr")
@@ -58,7 +70,7 @@ def main():
     with open(data_dir / "asr.jsonl") as f:
         instances = [json.loads(line.strip()) for line in f if line.strip()]
 
-    batch_generator = itertools.batched(sample_generator(instances, data_dir), n=BATCH_SIZE)
+    batch_generator = batched(sample_generator(instances, data_dir), n=BATCH_SIZE)
     
     results = []
     for batch in tqdm(batch_generator, total=math.ceil(len(instances) / BATCH_SIZE)):
