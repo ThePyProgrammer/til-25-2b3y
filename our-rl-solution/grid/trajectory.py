@@ -1,3 +1,4 @@
+import random
 from typing import Optional
 
 from .utils import Direction, Action, Point, Tile
@@ -200,7 +201,7 @@ class Trajectory:
 
         last_node = self.get_last_node()
         if last_node:
-            return f"Trajectory to {last_node.position} {last_node.direction} via {self.route}"
+            return f"Trajectory to {last_node.position} {last_node.direction} from {self.root.position} {self.root.direction} via {self.route}"
         return f"Incomplete Trajectory: {self.route}"
 
     def __repr__(self):
@@ -241,7 +242,8 @@ class TrajectoryTree:
         init_position: Point,
         init_direction: Optional[Direction] = None,
         size: int = 16,
-        consider_direction: bool = True
+        consider_direction: bool = True,
+        registry: Optional[NodeRegistry] = None
     ):
         """
         Initialize a TrajectoryTree with the agent's starting position and direction.
@@ -257,7 +259,7 @@ class TrajectoryTree:
         self.size = size
         self.consider_direction = consider_direction
         # Create a node registry for this trajectory tree
-        self.registry = NodeRegistry(size)
+        self.registry = registry if registry is not None else NodeRegistry(size)
 
         # Spatial index: maps positions to trajectories that pass through them
         self.position_index: dict[Point, set[Trajectory]] = {}
@@ -433,6 +435,9 @@ class TrajectoryTree:
         1. The shortest trajectory (fewest steps to reach that point)
         2. The longest trajectory (if different from the shortest)
 
+        Periodically validates a random sample of trajectories to ensure
+        invalid trajectories are properly identified.
+
         Returns:
             Number of new trajectories added
         """
@@ -441,7 +446,7 @@ class TrajectoryTree:
 
         before_len = len(self.trajectories)
 
-        old_edge_trajectories = self.edge_trajectories.copy()
+        old_edge_trajectories = self.edge_trajectories
         self.edge_trajectories = []  # Clear edge trajectories for this step
 
         # Mapping of endpoint keys to trajectories
@@ -486,6 +491,15 @@ class TrajectoryTree:
                     self.trajectories.append(new_traj)
                     self._register_trajectory_in_index(new_traj)
                     self.edge_trajectories.append(new_traj)
+
+        # Periodically validate a random sample of trajectories
+        # to ensure nothing that should be invalidated wasn't caught
+        if random.random() < 0.1:  # 10% chance to run validation
+            sample_size = min(500, len(self.trajectories))  # Cap at 10 trajectories
+            if sample_size > 0:
+                sampled_trajectories = random.sample(self.trajectories, sample_size)
+                for traj in sampled_trajectories:
+                    traj.get_last_node()
 
         # Return count of new trajectories
         return len(self.trajectories) - before_len

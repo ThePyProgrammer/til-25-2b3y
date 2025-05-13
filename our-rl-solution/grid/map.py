@@ -286,6 +286,35 @@ class Map:
                 if action in node.children:
                     del node.children[action]
 
+        # Define wall relationships (opposites and position offsets)
+        wall_relationships = {
+            'right': ('left', Point(1, 0)),   # If right wall here, there's a left wall at x+1,y
+            'left': ('right', Point(-1, 0)),  # If left wall here, there's a right wall at x-1,y
+            'bottom': ('top', Point(0, 1)),   # If bottom wall here, there's a top wall at x,y+1
+            'top': ('bottom', Point(0, -1))   # If top wall here, there's a bottom wall at x,y-1
+        }
+
+        # Update adjacent cells for walls that exist in the current cell
+        for wall_dir, has_wall in walls.items():
+            if has_wall and wall_dir in wall_relationships:
+                # Get opposite wall direction and position offset
+                opposite_wall, offset = wall_relationships[wall_dir]
+                adjacent_pos = Point(position.x + offset.x, position.y + offset.y)
+
+                # Only process if adjacent position is within grid bounds
+                if 0 <= adjacent_pos.x < self.size and 0 <= adjacent_pos.y < self.size:
+                    # For each direction at the adjacent cell
+                    for adj_direction in Direction:
+                        adj_node = self.registry.get_or_create_node(adjacent_pos, adj_direction)
+
+                        # Find and remove actions that would be blocked by this wall
+                        for adj_action in list(adj_node.children.keys()):
+                            # Check if this action would be blocked by the opposite wall
+                            if blocking_walls[adj_direction].get(adj_action) == opposite_wall:
+                                # Remove the blocked action
+                                if adj_action in adj_node.children:
+                                    del adj_node.children[adj_action]
+
     def create_trajectory_tree(self, position, direction=None):
         """
         Create a trajectory tree starting from a specific position and direction.
@@ -302,8 +331,7 @@ class Map:
             position = Point(position[0], position[1])
 
         # Create a trajectory tree with the current map's registry
-        tree = TrajectoryTree(position, direction, self.size)
-        tree.registry = self.registry  # Use the map's registry with wall information
+        tree = TrajectoryTree(position, direction, self.size, registry=self.registry)
 
         self.trees.append(tree)
 
