@@ -1,3 +1,5 @@
+from typing import Optional
+
 import numpy as np
 import heapq
 
@@ -23,7 +25,7 @@ class Map:
         """Initialize an empty map of the environment."""
         self.size = 16  # Assume a 16x16 environment
         self.map = np.zeros((self.size, self.size), dtype=np.uint8)
-        self.visited = np.zeros((self.size, self.size), dtype=bool)
+        self.viewed = np.zeros((self.size, self.size), dtype=bool)
         self.last_updated = np.zeros((self.size, self.size), dtype=np.int32)  # Timestamp for last update
         self.recently_updated = np.zeros((self.size, self.size), dtype=np.uint8)
         self.step_counter = 0  # Count of steps/updates to use as timestamp
@@ -119,7 +121,7 @@ class Map:
 
                     # Update map with tile information
                     self.map[x, y] = rotated_tile_value
-                    self.visited[x, y] = True
+                    self.viewed[x, y] = True
                     self.last_updated[x, y] = self.step_counter  # Record when this cell was updated
 
         # Update node connections for cells with updated wall information
@@ -144,7 +146,7 @@ class Map:
 
         for y in range(self.size):
             for x in range(self.size):
-                if self.visited[y, x]:
+                if self.viewed[y, x]:
                     # Use Tile utility to extract wall information
                     tile = Tile(self.map[y, x])
                     walls[y, x, 0] = tile.has_right_wall
@@ -161,14 +163,14 @@ class Map:
         Returns:
             np.ndarray: Array of shape (size, size) containing tile type information.
         """
-        tile_types = np.zeros((self.size, self.size), dtype=np.uint8)
+        tile_types: list[list[Optional[TileContent]]] = [[None for _ in range(16)] for _ in range(16)]
 
-        for y in range(self.size):
-            for x in range(self.size):
-                if self.visited[y, x]:
+        for x in range(self.size):
+            for y in range(self.size):
+                if self.viewed[x, y]:
                     # Use Tile utility to extract tile type
-                    tile = Tile(self.map[y, x])
-                    tile_types[y, x] = tile.tile_content
+                    tile = Tile(self.map[x, y])
+                    tile_types[x][y] = tile.tile_content
 
         return tile_types
 
@@ -184,7 +186,7 @@ class Map:
 
         for y in range(self.size):
             for x in range(self.size):
-                if self.visited[y, x]:
+                if self.viewed[y, x]:
                     # Use Tile utility to extract agent information
                     tile = Tile(self.map[y, x])
                     scouts[y, x] = tile.has_scout
@@ -199,7 +201,7 @@ class Map:
         Returns:
             np.ndarray: Boolean array of shape (size, size) for visited locations.
         """
-        return self.visited
+        return self.viewed
 
     @property
     def time_since_update(self):
@@ -350,36 +352,65 @@ class Map:
         Returns:
             Action: The optimal action to take
         """
-
-        # Check if the provided tree_index is valid
-        if tree_index >= len(self.trees):
-            raise ValueError(f"Invalid tree_index: {tree_index}. Only {len(self.trees)} trees available.")
-
-        # Get the trajectory tree
-        tree = self.trees[tree_index]
+        # Validate and get trajectory tree
+        tree = self._validate_and_get_tree(tree_index)
 
         # Get the current node from the registry
         start_node = self.registry.get_or_create_node(position, direction)
 
-        # Get reward density from trajectory tree
+        # Find positions with rewards
+        reward_positions = self._find_reward_positions(tree)
+
+        # If no rewards found, return a default action
+        if not reward_positions:
+            return self._get_default_action(start_node)
+
+        # Find shortest paths to all rewards
+        best_paths_to_rewards = self._find_paths_to_rewards(start_node, reward_positions)
+
+        # Choose the best action based on reward/distance ratio
+        # and maximizing field of view
+        best_action = self._select_best_action(reward_positions, best_paths_to_rewards)
+
+        # If no path found to any reward, return a default action
+        if best_action is None:
+            return self._get_default_action(start_node)
+
+        return best_action
+
+    def _validate_and_get_tree(self, tree_index: int):
+        """Validates the tree index and returns the corresponding tree."""
+        if tree_index >= len(self.trees):
+            raise ValueError(f"Invalid tree_index: {tree_index}. Only {len(self.trees)} trees available.")
+        return self.trees[tree_index]
+
+    def _find_reward_positions(self, tree):
+        """Finds all positions with positive rewards in the reward density."""
+        reward_positions = []
         reward_density = tree.probability_density
 
-        # Find positions with rewards
-        reward_positions = []
         for y in range(self.size):
             for x in range(self.size):
                 if reward_density[y, x] > 0:
                     reward_positions.append((Point(x, y), reward_density[y, x]))
 
-        # If no rewards found, just return a default action that's valid
-        if not reward_positions:
-            # Return a valid action if possible
-            for action in Action:
-                if action in start_node.children:
-                    return action
-            return Action.STAY  # Default if no valid actions
+        return reward_positions
 
-        # Modified Dijkstra's algorithm using a priority queue for efficiency
+    def _get_default_action(self, node):
+        """Returns a default valid action from the given node."""
+        # Return a valid action if possible
+        for action in Action:
+            if action in node.children:
+                return action
+        return Action.STAY  # Default if no valid actions
+
+    def _find_paths_to_rewards(self, start_node, reward_positions):
+        """
+        Uses Dijkstra's algorithm to find shortest paths to all reward positions.
+
+        Returns:
+            A dictionary mapping reward positions to (node, distance, first_action)
+        """
         # Maps node hash -> (distance, first_action, previous_node_hash)
         distances = {hash(start_node): (0, None, None)}
         visited = set()  # Set of visited node hashes
@@ -402,47 +433,69 @@ class Map:
             current_node = self.registry.nodes[current_hash]
 
             # Check if this node is at a reward position
-            for reward_pos, reward_value in reward_positions:
-                if current_node.position == reward_pos:
-                    # Get the first action that led to this path
-                    _, first_action, _ = distances[current_hash]
-
-                    # Update best path to this reward if better
-                    if reward_pos not in best_paths_to_rewards or current_dist < best_paths_to_rewards[reward_pos][1]:
-                        best_paths_to_rewards[reward_pos] = (current_node, current_dist, first_action)
+            self._update_paths_if_at_reward(
+                current_node, current_hash, current_dist,
+                reward_positions, distances, best_paths_to_rewards
+            )
 
             # If we've found paths to all rewards, we can stop
             if len(best_paths_to_rewards) == len(reward_positions):
                 break
 
             # Process neighbors
-            for action, next_node in current_node.children.items():
-                next_hash = hash(next_node)
+            self._process_neighbors(
+                current_node, current_hash, current_dist,
+                start_node, distances, visited, pq
+            )
 
-                if next_hash in visited:
-                    continue
+        return best_paths_to_rewards
 
-                # Calculate new distance
-                new_dist = current_dist + 1
+    def _update_paths_if_at_reward(self, current_node, current_hash, current_dist,
+                                  reward_positions, distances, best_paths_to_rewards):
+        """Updates best_paths_to_rewards if the current node is at a reward position."""
+        for reward_pos, reward_value in reward_positions:
+            if current_node.position == reward_pos:
+                # Get the first action that led to this path
+                _, first_action, _ = distances[current_hash]
 
-                # If this is a shorter path or a new node
-                if next_hash not in distances or new_dist < distances[next_hash][0]:
-                    # Determine first action in the path
-                    first_action = action if current_hash == hash(start_node) else distances[current_hash][1]
+                # Update best path to this reward if better
+                if reward_pos not in best_paths_to_rewards or current_dist < best_paths_to_rewards[reward_pos][1]:
+                    best_paths_to_rewards[reward_pos] = (current_node, current_dist, first_action)
 
-                    # Update distance and path information
-                    distances[next_hash] = (new_dist, first_action, current_hash)
+    def _process_neighbors(self, current_node, current_hash, current_dist,
+                          start_node, distances, visited, pq):
+        """Processes all neighbors of the current node in Dijkstra's algorithm."""
+        for action, next_node in current_node.children.items():
+            next_hash = hash(next_node)
 
-                    # Add to priority queue
-                    heapq.heappush(pq, (new_dist, next_hash))
+            if next_hash in visited:
+                continue
 
-        # Find the best path based on reward/distance ratio
+            # Calculate new distance
+            new_dist = current_dist + 1
+
+            # If this is a shorter path or a new node
+            if next_hash not in distances or new_dist < distances[next_hash][0]:
+                # Determine first action in the path
+                first_action = action if current_hash == hash(start_node) else distances[current_hash][1]
+
+                # Update distance and path information
+                distances[next_hash] = (new_dist, first_action, current_hash)
+
+                # Add to priority queue
+                heapq.heappush(pq, (new_dist, next_hash))
+
+    def _select_best_action(self, reward_positions, best_paths_to_rewards):
+        """
+        Selects the best action based on reward/distance ratio,
+        with a preference for directions that maximize field of view.
+        """
         best_reward_ratio = -1
-        best_action = None
+        candidate_actions = []  # Store actions with the same best ratio
 
         for reward_pos, reward_value in reward_positions:
             if reward_pos in best_paths_to_rewards:
-                _, distance, first_action = best_paths_to_rewards[reward_pos]
+                node, distance, first_action = best_paths_to_rewards[reward_pos]
 
                 # Handle case where we're already at the reward
                 if distance == 0:
@@ -450,17 +503,122 @@ class Map:
                 else:
                     ratio = reward_value / distance
 
-                # Update best action if better ratio found
+                # Found a better ratio
                 if ratio > best_reward_ratio and first_action is not None:
                     best_reward_ratio = ratio
-                    best_action = first_action
+                    candidate_actions = [(first_action, node)]
+                # Same ratio, add to candidates
+                elif ratio == best_reward_ratio and first_action is not None:
+                    candidate_actions.append((first_action, node))
 
-        # If no path found to any reward, return a default action
-        if best_action is None:
-            # Return a valid action if possible
-            for action in Action:
-                if action in start_node.children:
-                    return action
-            return Action.STAY  # Default if no valid actions
+        # If no candidates found, return None
+        if not candidate_actions:
+            return None
+
+        # If only one candidate, return it
+        if len(candidate_actions) == 1:
+            return candidate_actions[0][0]
+
+        # Multiple candidates with same ratio, choose based on field of view
+        return self._select_action_for_best_view(candidate_actions)
+
+    def _select_action_for_best_view(self, candidate_actions):
+        """
+        Selects the action that maximizes the guard's field of view from candidate actions.
+
+        The guard's viewcone is shaped like:
+        - 4 tiles forward
+        - 2 tiles to the left, right, and backward
+        - Making the viewcone 7x5 in total
+
+        Args:
+            candidate_actions: List of tuples (action, resulting_node) with same reward/distance ratio
+
+        Returns:
+            Action: The action that maximizes field of view
+        """
+        best_action = candidate_actions[0][0]  # Default to first action
+        max_view_score = -1
+
+        # tile_types = self.get_tile_type()
+
+        for action, node in candidate_actions:
+            # Calculate view score based on the resulting direction
+            # Higher score = more unexplored tiles in view cone
+            view_score = 0
+
+            # Get all tiles in the potential view cone
+            view_tiles = self._get_viewcone_tiles(node.position, node.direction)
+
+            # Count unexplored/reward tiles in viewcone
+            for tile_pos in view_tiles:
+                # Skip tiles outside grid boundaries
+                if (tile_pos.x < 0 or tile_pos.x >= self.size or
+                    tile_pos.y < 0 or tile_pos.y >= self.size):
+                    continue
+
+                # Check if tile has been visited
+                if not self.viewed[tile_pos.x][tile_pos.y]:
+                    view_score += 1
+
+            # Update best action if better view score found
+            if view_score > max_view_score:
+                max_view_score = view_score
+                best_action = action
 
         return best_action
+
+    def _get_viewcone_tiles(self, position, direction):
+        """
+        Returns a list of tile positions in the viewcone from a given position and direction.
+
+        The viewcone is 7x5:
+        - 4 tiles forward
+        - 2 tiles to the left, right, and backward
+
+        Args:
+            position: Position of the agent
+            direction: Direction the agent is facing
+
+        Returns:
+            List of Point objects representing tile positions in the viewcone
+        """
+        viewcone_tiles = []
+        
+        # Define direction vectors for each direction
+        direction_vectors = {
+            Direction.RIGHT: (1, 0),
+            Direction.DOWN: (0, 1),
+            Direction.LEFT: (-1, 0),
+            Direction.UP: (0, -1)
+        }
+        
+        # Get the direction vector for the current direction
+        dx, dy = direction_vectors[direction]
+        
+        # Forward section: 4 tiles in the facing direction
+        for i in range(1, 5):
+            viewcone_tiles.append(Point(position.x + i * dx, position.y + i * dy))
+        
+        # Left and right sections (perpendicular to the direction)
+        # For horizontal directions (RIGHT, LEFT), left/right means up/down
+        # For vertical directions (DOWN, UP), left/right means left/right
+        perpendicular_dx, perpendicular_dy = -dy, dx  # Rotate 90 degrees
+        
+        # Side tiles (left and right of forward direction)
+        for side in range(-2, 3):
+            if side == 0:
+                continue  # Skip center line (handled in forward section)
+            
+            # Add tiles in a line perpendicular to the direction
+            for fwd in range(0, 3):
+                # Calculate the position: start + forward_component + side_component
+                x = position.x + fwd * dx + side * perpendicular_dx
+                y = position.y + fwd * dy + side * perpendicular_dy
+                viewcone_tiles.append(Point(x, y))
+        
+        # Backward section: 2 tiles in the opposite direction
+        for i in range(-2, 0):
+            viewcone_tiles.append(Point(position.x + i * dx, position.y + i * dy))
+            
+        return viewcone_tiles
