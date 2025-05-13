@@ -235,6 +235,14 @@ class Trajectory:
 
         return False
 
+    @property
+    def parent(self):
+        return self._inherited_from
+
+    @property
+    def children(self):
+        return self._inherits_to
+
 
 class TrajectoryTree:
     def __init__(
@@ -334,10 +342,12 @@ class TrajectoryTree:
         agent_position = self._check_for_agent(information, seeking_scout)
         if agent_position is not None:
             self._reset_trajectories_for_agent(agent_position)
+            self.trajectories = self._get_valid_trajectories()
             return
 
         if seeking_scout:
             self._prune_by_tile_content(information)
+            self.trajectories = self._get_valid_trajectories()
 
     def _check_for_agent(self, information, seeking_scout):
         """Check if an agent is present in the information."""
@@ -408,19 +418,39 @@ class TrajectoryTree:
             trajectories_to_keep = set(self.trajectories)
 
         # Compute final valid trajectories
-        valid_trajectories = [traj for traj in trajectories_to_keep
-                             if traj not in trajectories_to_remove] if trajectories_to_keep else []
+        valid_trajectories = [
+            traj for traj in trajectories_to_keep if traj not in trajectories_to_remove
+        ] if trajectories_to_keep else []
 
         # Remove invalid trajectories from the index
         removed_trajectories = set(self.trajectories) - set(valid_trajectories)
         for traj in removed_trajectories:
+            traj.mark_as_invalid()
             self._unregister_trajectory_from_index(traj)
 
+        self._destroy_trajectory_families()
         self.trajectories = valid_trajectories
 
         # Update edge trajectories - use a set operation for efficiency
         trajectory_set = set(self.trajectories)
-        self.edge_trajectories = [traj for traj in self.edge_trajectories if traj in trajectory_set]
+
+        has_deleted_edge = False
+        for traj in self.edge_trajectories:
+            if traj not in trajectory_set:
+                has_deleted_edge = True
+                break
+
+        if has_deleted_edge:
+            self.edge_trajectories = self._get_edge_trajectories()
+
+    def _get_valid_trajectories(self):
+        """
+        Returns a list of all valid trajectories (not marked as invalid).
+
+        Returns:
+            list: List of valid trajectories
+        """
+        return [traj for traj in self.trajectories if not traj.invalid]
 
     def step(self) -> int:
         """
@@ -492,14 +522,17 @@ class TrajectoryTree:
                     self._register_trajectory_in_index(new_traj)
                     self.edge_trajectories.append(new_traj)
 
-        # Periodically validate a random sample of trajectories
-        # to ensure nothing that should be invalidated wasn't caught
-        if random.random() < 0.1:  # 10% chance to run validation
-            sample_size = min(500, len(self.trajectories))  # Cap at 10 trajectories
-            if sample_size > 0:
-                sampled_trajectories = random.sample(self.trajectories, sample_size)
-                for traj in sampled_trajectories:
-                    traj.get_last_node()
+        # # Periodically validate a random sample of trajectories
+        # # to ensure nothing that should be invalidated wasn't caught
+        # if random.random() < 0.1:  # 10% chance to run validation
+        #     sample_size = min(500, len(self.trajectories))  # Cap at 500 trajectories
+        #     if sample_size > 0:
+        #         sampled_trajectories = random.sample(self.trajectories, sample_size)
+        #         for traj in sampled_trajectories:
+        #             traj.get_last_node()
+
+        #         # Filter out invalid trajectories
+        #         self.trajectories = self._get_valid_trajectories()
 
         # Return count of new trajectories
         return len(self.trajectories) - before_len
@@ -542,3 +575,32 @@ class TrajectoryTree:
             density = density / total
 
         return density
+
+    def _destroy_trajectory_families(self):
+        """
+        Starting from any invalid trajectory, traverse up ._inherited_from,
+        deleting invalids from ._inherits_to. traverse until no invalids in ._inherits_to are found
+        """
+        parent_traj: Optional[Trajectory] = None
+
+        for traj in self.trajectories:
+            if traj.invalid:
+                parent_traj = traj.parent
+
+                if parent_traj:
+                    if len(parent_traj.children) > 0:
+                        parent_traj._inherits_to = [child for child in parent_traj.children if not child.invalid]
+
+    def _get_edge_trajectories(self):
+        """
+        Edge trajectories are basically any trajectory without children
+        """
+        edge_trajectories = []
+        for traj in self.trajectories:
+            if traj.invalid:
+                continue
+
+            if len(traj.children) < 2:
+                edge_trajectories.append(traj)
+
+        return edge_trajectories
