@@ -17,7 +17,7 @@ load_dotenv()
 TEAM_NAME = os.getenv("TEAM_NAME")
 TEAM_TRACK = os.getenv("TEAM_TRACK")
 
-BATCH_SIZE = 4
+BATCH_SIZE = 32
 
 
 wer_transforms = jiwer.Compose([
@@ -68,7 +68,11 @@ def main():
     results_dir.mkdir(parents=True, exist_ok=True)
     
     with open(data_dir / "asr.jsonl") as f:
-        instances = [json.loads(line.strip()) for line in f if line.strip()]
+        instances = [json.loads(line.strip()) for line in f if line.strip()][:200]
+    
+    
+    ground_truths = [instance["transcript"] for instance in instances]
+    print([t for t in ground_truths if len(t) == 0])
 
     batch_generator = batched(sample_generator(instances, data_dir), n=BATCH_SIZE)
     
@@ -83,7 +87,9 @@ def main():
     print(f"Saving test results to {str(results_path)}")
     with open(results_path, "w") as results_file:
         json.dump(results, results_file)
-
+        
+    print([t for t in results if len(t) == 0])
+    
     ground_truths = [instance["transcript"] for instance in instances]
     score = score_asr(results, ground_truths)
     print("1 - WER:", score)
