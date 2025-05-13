@@ -16,12 +16,12 @@ RUN apt-get update && apt-get install -y libsndfile1 ffmpeg
 
 # Installs your dependencies.
 RUN pip install -U pip
-COPY requirements.txt .
 
 RUN pip install Cython packaging
 RUN pip install nemo_toolkit["asr"]
 
 # Install additional dependencies for NeMo ASR
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copies your source files and setup script.
