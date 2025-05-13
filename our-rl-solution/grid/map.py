@@ -1,4 +1,5 @@
 import numpy as np
+import heapq
 
 from .utils import (
     Direction,
@@ -307,3 +308,131 @@ class Map:
         self.trees.append(tree)
 
         return tree
+
+    def get_optimal_action(self, position: Point, direction: Direction, tree_index: int = 0) -> Action:
+        """
+        Get the optimal action to take from the current position and direction
+        to reach the highest reward in the shortest path.
+
+        Args:
+            position: Current position of the agent
+            direction: Current direction the agent is facing
+            tree_index: Index of the trajectory tree to use
+
+        Returns:
+            Action: The optimal action to take
+        """
+
+        # Check if the provided tree_index is valid
+        if tree_index >= len(self.trees):
+            raise ValueError(f"Invalid tree_index: {tree_index}. Only {len(self.trees)} trees available.")
+
+        # Get the trajectory tree
+        tree = self.trees[tree_index]
+
+        # Get the current node from the registry
+        start_node = self.registry.get_or_create_node(position, direction)
+
+        # Get reward density from trajectory tree
+        reward_density = tree.probability_density
+
+        # Find positions with rewards
+        reward_positions = []
+        for y in range(self.size):
+            for x in range(self.size):
+                if reward_density[y, x] > 0:
+                    reward_positions.append((Point(x, y), reward_density[y, x]))
+
+        # If no rewards found, just return a default action that's valid
+        if not reward_positions:
+            # Return a valid action if possible
+            for action in Action:
+                if action in start_node.children:
+                    return action
+            return Action.STAY  # Default if no valid actions
+
+        # Modified Dijkstra's algorithm using a priority queue for efficiency
+        # Maps node hash -> (distance, first_action, previous_node_hash)
+        distances = {hash(start_node): (0, None, None)}
+        visited = set()  # Set of visited node hashes
+
+        # Priority queue stores (distance, node_hash)
+        pq = [(0, hash(start_node))]
+
+        # Maps reward position -> (closest node, distance, first_action)
+        best_paths_to_rewards = {}
+
+        while pq:
+            current_dist, current_hash = heapq.heappop(pq)
+
+            # Skip if already processed this node with a shorter path
+            if current_hash in visited:
+                continue
+
+            # Mark as visited
+            visited.add(current_hash)
+            current_node = self.registry.nodes[current_hash]
+
+            # Check if this node is at a reward position
+            for reward_pos, reward_value in reward_positions:
+                if current_node.position == reward_pos:
+                    # Get the first action that led to this path
+                    _, first_action, _ = distances[current_hash]
+
+                    # Update best path to this reward if better
+                    if reward_pos not in best_paths_to_rewards or current_dist < best_paths_to_rewards[reward_pos][1]:
+                        best_paths_to_rewards[reward_pos] = (current_node, current_dist, first_action)
+
+            # If we've found paths to all rewards, we can stop
+            if len(best_paths_to_rewards) == len(reward_positions):
+                break
+
+            # Process neighbors
+            for action, next_node in current_node.children.items():
+                next_hash = hash(next_node)
+
+                if next_hash in visited:
+                    continue
+
+                # Calculate new distance
+                new_dist = current_dist + 1
+
+                # If this is a shorter path or a new node
+                if next_hash not in distances or new_dist < distances[next_hash][0]:
+                    # Determine first action in the path
+                    first_action = action if current_hash == hash(start_node) else distances[current_hash][1]
+
+                    # Update distance and path information
+                    distances[next_hash] = (new_dist, first_action, current_hash)
+
+                    # Add to priority queue
+                    heapq.heappush(pq, (new_dist, next_hash))
+
+        # Find the best path based on reward/distance ratio
+        best_reward_ratio = -1
+        best_action = None
+
+        for reward_pos, reward_value in reward_positions:
+            if reward_pos in best_paths_to_rewards:
+                _, distance, first_action = best_paths_to_rewards[reward_pos]
+
+                # Handle case where we're already at the reward
+                if distance == 0:
+                    ratio = float('inf')  # Highest possible ratio
+                else:
+                    ratio = reward_value / distance
+
+                # Update best action if better ratio found
+                if ratio > best_reward_ratio and first_action is not None:
+                    best_reward_ratio = ratio
+                    best_action = first_action
+
+        # If no path found to any reward, return a default action
+        if best_action is None:
+            # Return a valid action if possible
+            for action in Action:
+                if action in start_node.children:
+                    return action
+            return Action.STAY  # Default if no valid actions
+
+        return best_action

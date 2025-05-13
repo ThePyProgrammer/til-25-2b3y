@@ -490,11 +490,6 @@ class TrajectoryTree:
         # Return count of new trajectories
         return len(self.trajectories) - before_len
 
-    def deduplicate(self):
-        """Deduplicate trajectories based on their endpoint keys."""
-        # This method is now mostly handled by the step() method
-        pass
-
     @property
     def probability_density(self):
         """
