@@ -15,24 +15,24 @@ class ASRManager:
         print(f"Loading ASR model '{model_name}'")
         self.asr_model = nemo_asr.models.ASRModel.from_pretrained(model_name)
         self.asr_model.to(torch.float16)
-        
+
         self.max_batch_size = 16
-        
+
         # self.asr_model.cfg.decoding.greedy.max_symbols = 5
         # self.asr_model.cfg.decoding.beam.beam_size = 1
         # self.asr_model.cfg.decoding.durations = [0, 1, 2]
 
-    def asr(self, decoded: list[bytes]) -> list[str]:
+    def asr(self, encoded: list[bytes]) -> list[str]:
         """Performs ASR transcription on a batch of audio files.
         Args:
-            decoded: A list of audio files in bytes.
+            encoded: A list of audio files in bytes.
         Returns:
             A list of strings containing the transcriptions of each audio file.
         """
         transcriptions = []
         try:
             all_audio_tensors = []
-            for audio_bytes in decoded:
+            for audio_bytes in encoded:
                 # Convert bytes to in-memory file object
                 audio_file = io.BytesIO(audio_bytes)
                 # Read the WAV file
@@ -65,9 +65,9 @@ class ASRManager:
                     if transcription and hasattr(transcription, 'text'):
                         transcriptions.append(transcription.text)
                     else:
-                        transcriptions.append("")
+                        transcriptions.append("i am steve")
         except Exception as e:
             print(f"Error transcribing audio batch: {e}")
             # In case of error, return empty strings for all inputs
-            transcriptions = [""] * len(decoded)
+            transcriptions = [""] * len(encoded)
         return transcriptions

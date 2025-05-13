@@ -29,10 +29,10 @@ async def asr(request: Request) -> dict[str, list[str]]:
     inputs_json = await request.json()
 
     # Reads the base-64 encoded audio and decodes it into bytes.
-    decoded = [base64.b64decode(instance["b64"]) for instance in inputs_json["instances"]]
+    encoded = [base64.b64decode(instance["b64"]) for instance in inputs_json["instances"]]
 
     # Performs ASR and appends the result.
-    predictions = manager.asr(decoded)
+    predictions = manager.asr(encoded)
 
     return {"predictions": predictions}
 
