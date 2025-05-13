@@ -1,7 +1,10 @@
 from typing import Optional
 
+import numpy as np
+
 from .utils import Direction, Action, Point
 from .node import NodeRegistry, DirectionalNode
+
 
 class Trajectory:
     def __init__(self, root_node):
@@ -297,6 +300,9 @@ class TrajectoryTree:
             if expanded_trajectories:
                 new_trajectories.extend(expanded_trajectories)
 
+        # filter invalid trajectories out.
+        self.trajectories = [traj for traj in self.trajectories if not traj.invalid]
+
         self.edge_trajectories = new_trajectories
         self.trajectories.extend(new_trajectories)
 
@@ -311,3 +317,35 @@ class TrajectoryTree:
         self.trajectories = list(set(self.trajectories))
         # Also update edge_trajectories to maintain consistency
         self.edge_trajectories = list(set(self.edge_trajectories))
+
+    @property
+    def probability_density(self):
+        """
+        Calculate the probability density map based on trajectory endpoints.
+
+        Returns:
+            numpy.ndarray: A 2D array of shape (size, size) where each cell
+                          represents the probability of the agent being at that location.
+        """
+        probas = np.zeros((self.size, self.size))
+
+        # Count valid trajectories at each position
+        valid_trajectories = [t for t in self.trajectories if not t.invalid]
+
+        # Skip if no valid trajectories
+        if not valid_trajectories:
+            return probas
+
+        # Count trajectories at each position
+        for trajectory in valid_trajectories:
+            endpoint_key = trajectory.get_endpoint_key(consider_direction=False)
+            if endpoint_key:  # Make sure the trajectory has a valid endpoint
+                position = endpoint_key[0]  # Extract the position from the tuple
+                probas[position.y, position.x] += 1
+
+        # Normalize to get probability distribution
+        total = np.sum(probas)
+        if total > 0:  # Avoid division by zero
+            probas = probas / total
+
+        return probas
