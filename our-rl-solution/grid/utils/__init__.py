@@ -10,7 +10,6 @@ from .enums import (
 from .tile import (
     Tile,
     rotate_wall_bits,
-    int_to_tile
 )
 
 from .geometry import (
@@ -27,12 +26,11 @@ __all__ = [
     'Direction',
     'Action',
     'Wall',
-    
+
     # Tile
     'Tile',
     'rotate_wall_bits',
-    'int_to_tile',
-    
+
     # Geometry
     'Point',
     'get_hash',

@@ -75,6 +75,11 @@ class Tile:
         return self.tile_content != TileContent.NO_VISION
 
     @property
+    def is_empty(self) -> bool:
+        """Check if the tile is a recon tile."""
+        return self.tile_content == TileContent.EMPTY
+
+    @property
     def is_recon(self) -> bool:
         """Check if the tile is a recon tile."""
         return self.tile_content == TileContent.RECON
@@ -206,8 +211,3 @@ def rotate_wall_bits(tile_value, direction):
     )
 
     return item_bits | agent_bits | rotated_wall_bits
-
-
-def int_to_tile(value: int) -> Tile:
-    """Convert an integer value to a Tile object."""
-    return Tile(value)

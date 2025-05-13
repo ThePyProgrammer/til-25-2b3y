@@ -3,7 +3,7 @@ import pygame
 import warnings
 from enum import IntEnum
 from ..map import Map
-from ..utils import TileContent, Wall as WallEnum, int_to_tile
+from ..utils import TileContent, Wall as WallEnum, Tile as UtilTile
 
 
 class Tile(IntEnum):
@@ -128,10 +128,6 @@ class Wall(IntEnum):
 def get_bit(value, bit_position):
     """Helper function to check if a bit is set at a specific position."""
     return (value & (1 << bit_position)) > 0
-    
-def get_tile_obj(value):
-    """Convert an integer value to a Tile instance for easier property access."""
-    return int_to_tile(value)
 
 
 class MapVisualizer:
@@ -147,12 +143,12 @@ class MapVisualizer:
         self.map = map_obj
         self.window_size = window_size
         self.caption = caption
-        
+
         # Initialize pygame components
         self.window = None
         self.clock = None
         self.font = None
-        
+
         # FPS for rendering
         self.fps = 30
 
@@ -195,7 +191,7 @@ class MapVisualizer:
         Render the map visualization.
 
         Args:
-            human_mode: If True, updates the display and manages timing. 
+            human_mode: If True, updates the display and manages timing.
                       If False, returns an RGB array.
         """
         # Initialize pygame components if not already done
@@ -211,7 +207,7 @@ class MapVisualizer:
 
         if self.clock is None and human_mode:
             self.clock = pygame.time.Clock()
-            
+
         if self.font is None:
             try:
                 self.font = pygame.font.Font("freesansbold.ttf", 12)
@@ -220,7 +216,7 @@ class MapVisualizer:
 
         # Fill with white background
         self.window.fill((255, 255, 255))
-        
+
         # Calculate pixel size for a grid square
         pix_square_size = self.window_size / self.map.size
 
@@ -237,15 +233,15 @@ class MapVisualizer:
         for x, y in np.ndindex((self.map.size, self.map.size)):
             if not visited[x, y]:
                 continue
-            
+
             # Get tile object from raw value for easier property access
-            tile_obj = get_tile_obj(self.map.map[x, y])
-                
+            tile_obj = UtilTile(self.map.map[x, y])
+
             # Draw the tile type
             tile_type = tile_types[x, y]
             if tile_type > 0:  # Skip NO_VISION
                 Tile(tile_type).draw(self.window, x, y, int(pix_square_size))
-            
+
             # Draw walls - can use tile_obj properties but continue to use wall array for consistency
             if walls[x, y, 0]:  # Right wall
                 Wall.RIGHT.draw(self.window, x, y, int(pix_square_size))
@@ -255,7 +251,7 @@ class MapVisualizer:
                 Wall.LEFT.draw(self.window, x, y, int(pix_square_size))
             if walls[x, y, 3]:  # Top wall
                 Wall.TOP.draw(self.window, x, y, int(pix_square_size))
-            
+
             # Draw agents - use scouts/guards arrays for consistency
             if scouts[x, y]:
                 Player.SCOUT.draw(self.window, x, y, int(pix_square_size))

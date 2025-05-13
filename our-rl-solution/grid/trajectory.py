@@ -2,7 +2,7 @@ from typing import Optional
 
 import numpy as np
 
-from .utils import Direction, Action, Point
+from .utils import Direction, Action, Point, Tile
 from .node import NodeRegistry, DirectionalNode
 
 
@@ -27,6 +27,27 @@ class Trajectory:
             return False
         return (self.root == other.root and
                 self.route == other.route)
+
+    def __contains__(self, item: DirectionalNode | Point) -> bool:
+        """
+        Check if a DirectionalNode or Point is in this trajectory.
+
+        Args:
+            item: Either a DirectionalNode or a Point object
+
+        Returns:
+            bool: True if the node or position is in this trajectory, False otherwise
+        """
+        if self.invalid:
+            return False
+
+        if isinstance(item, DirectionalNode):
+            return item in self.nodes
+
+        if isinstance(item, Point):
+            return any(node.position == item for node in self.nodes)
+
+        return False
 
     def copy(self):
         """Create a deep copy of this trajectory with the same root but new lists."""
@@ -286,6 +307,67 @@ class TrajectoryTree:
                                directions are considered distinct. If False, only position matters.
         """
         self.consider_direction = consider_direction
+
+    def prune(self, information: list[tuple[Point, Tile]], seeking_scout: bool = True):
+        """
+        1. when I encounter the agent, I can destroy all trajectories since the agent's position is known
+        2. when I encounter a tile that has not been visited, I remove all trajectories containing that tile (when seeking scout)
+        3. when I encounter a tile that has been visited, I remove all trajectories not containing that tile (when seeking scout)
+
+        Args:
+            information (list[tuple[Point, Tile]]): recently updated/observed tiles
+            seeking_scout (bool): If True, look for scout agent. If False, look for guard agent.
+        """
+        # First check for agent sightings - this is a fast early exit
+        for position, tile in information:
+            # Case 1: If we find the target agent, reset all trajectories and create a new one at the agent's position
+            if (seeking_scout and tile.has_scout) or (not seeking_scout and tile.has_guard):
+                self.trajectories.clear()
+                self.edge_trajectories.clear()
+
+                # Create new trajectories at the agent's position, considering all possible directions
+                for direction in Direction:
+                    root_node = self.registry.get_or_create_node(position, direction)
+                    self.trajectories.append(Trajectory(root_node))
+
+                # Update edge trajectories
+                self.edge_trajectories = self.trajectories.copy()
+
+                # No need to process further since we've reset all trajectories
+                return
+
+        if seeking_scout:
+            # Group positions by condition to avoid redundant iterations
+            positions_to_exclude = []  # Positions trajectories should NOT contain
+            positions_must_contain = []  # Positions trajectories MUST contain
+            
+            for position, tile in information:
+                # Case 2: not visited - remove trajectories containing this position
+                if tile.is_visible and (tile.is_recon or tile.is_mission):
+                    positions_to_exclude.append(position)
+                # Case 3: visited - only keep trajectories containing this position
+                if tile.is_empty:
+                    positions_must_contain.append(position)
+            
+            # Apply filtering in a single pass
+            if positions_to_exclude or positions_must_contain:
+                valid_trajectories = []
+                
+                for traj in self.trajectories:
+                    # Skip if trajectory contains any position in the exclude list
+                    if any(position in traj for position in positions_to_exclude):
+                        continue
+                    
+                    # Skip if trajectory doesn't contain ALL positions in the must_contain list
+                    if not all(position in traj for position in positions_must_contain):
+                        continue
+                    
+                    valid_trajectories.append(traj)
+                
+                self.trajectories = valid_trajectories
+                # Update edge trajectories - use a set operation for efficiency
+                trajectory_set = set(self.trajectories)
+                self.edge_trajectories = [traj for traj in self.edge_trajectories if traj in trajectory_set]
 
     def step(self) -> int:
         """

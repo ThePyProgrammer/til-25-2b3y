@@ -6,15 +6,14 @@ from .utils import (
     Point,
     rotate_wall_bits,
     view_to_world,
-    TileContent,
-    int_to_tile
+    Tile,
+    TileContent
 )
 from .node import NodeRegistry, DirectionalNode
 from .trajectory import TrajectoryTree
 
 
 class Map:
-    # Tile type constants - using TileContent enum now
     EMPTY = TileContent.EMPTY
     RECON = TileContent.RECON
     MISSION = TileContent.MISSION
@@ -25,11 +24,13 @@ class Map:
         self.map = np.zeros((self.size, self.size), dtype=np.uint8)
         self.visited = np.zeros((self.size, self.size), dtype=bool)
         self.last_updated = np.zeros((self.size, self.size), dtype=np.int32)  # Timestamp for last update
+        self.recently_updated = np.zeros((self.size, self.size), dtype=np.uint8)
         self.step_counter = 0  # Count of steps/updates to use as timestamp
 
-        # Initialize node registry and populate nodes
         self.registry = NodeRegistry(self.size)
         self._populate_nodes()
+
+        self.trees: list[TrajectoryTree] = []
 
     def _populate_nodes(self):
         """Populate all possible nodes in the grid (assuming no walls)."""
@@ -71,9 +72,10 @@ class Map:
 
         # Increment step counter
         self.step_counter += 1
+        self.recently_updated = np.zeros((self.size, self.size), dtype=np.uint8)
 
-        # Track which cells have wall updates
         updated_cells = []
+        observed_cells = []
 
         # Viewcone is 7x5 with agent at (2, 2)
         for i in range(viewcone.shape[0]):
@@ -81,14 +83,10 @@ class Map:
                 tile_value = viewcone[i, j]
 
                 # Create a Tile instance for easy property access
-                tile = int_to_tile(tile_value)
-                
-                # Skip tiles with no vision
-                if not tile.is_visible:
-                    continue
+                tile = Tile(tile_value)
 
-                # Skip empty tiles
-                if tile.tile_content == self.EMPTY:
+                # Skip tiles with no vision, possible to hear agents without vision
+                if not tile.is_visible and not tile.has_scout and not tile.has_guard:
                     continue
 
                 # Convert viewcone coordinates to world coordinates
@@ -102,7 +100,6 @@ class Map:
                 # Check if coordinates are within bounds
                 if (0 <= x < self.size and 0 <= y < self.size and tile_value != 0):
                     # Create a Tile instance and rotate its walls to maintain global orientation
-                    tile = int_to_tile(tile_value)
                     rotated_tile_value = rotate_wall_bits(tile_value, direction)
 
                     # Clear agent bits when processing the agent's own position in viewcone
@@ -110,11 +107,14 @@ class Map:
                         # Clear bits 2-3 (agent bits) but keep all other bits
                         rotated_tile_value = rotated_tile_value & ~0b1100
 
+                    info = (Point(x, y), Tile(rotated_tile_value))
+                    observed_cells.append(info)
+
                     # Check if wall information has changed
                     old_value = self.map[x, y]
                     if old_value != rotated_tile_value:
                         # Wall configuration might have changed
-                        updated_cells.append((x, y, rotated_tile_value))
+                        updated_cells.append(info)
 
                     # Update map with tile information
                     self.map[x, y] = rotated_tile_value
@@ -122,8 +122,12 @@ class Map:
                     self.last_updated[x, y] = self.step_counter  # Record when this cell was updated
 
         # Update node connections for cells with updated wall information
-        for x, y, tile_value in updated_cells:
-            self._update_node_connections(x, y, tile_value)
+        for position, tile in updated_cells:
+            self._update_node_connections(position, tile)
+
+        for tree in self.trees:
+            tree.step()
+            tree.prune(observed_cells)
 
         return self.map
 
@@ -141,7 +145,7 @@ class Map:
             for x in range(self.size):
                 if self.visited[y, x]:
                     # Use Tile utility to extract wall information
-                    tile = int_to_tile(self.map[y, x])
+                    tile = Tile(self.map[y, x])
                     walls[y, x, 0] = tile.has_right_wall
                     walls[y, x, 1] = tile.has_bottom_wall
                     walls[y, x, 2] = tile.has_left_wall
@@ -162,7 +166,7 @@ class Map:
             for x in range(self.size):
                 if self.visited[y, x]:
                     # Use Tile utility to extract tile type
-                    tile = int_to_tile(self.map[y, x])
+                    tile = Tile(self.map[y, x])
                     tile_types[y, x] = tile.tile_content
 
         return tile_types
@@ -181,7 +185,7 @@ class Map:
             for x in range(self.size):
                 if self.visited[y, x]:
                     # Use Tile utility to extract agent information
-                    tile = int_to_tile(self.map[y, x])
+                    tile = Tile(self.map[y, x])
                     scouts[y, x] = tile.has_scout
                     guards[y, x] = tile.has_guard
 
@@ -215,17 +219,14 @@ class Map:
 
         return result
 
-    def _update_node_connections(self, x, y, tile_value):
+    def _update_node_connections(self, position: Point, tile: Tile):
         """
         Update node connections based on wall information.
 
         Args:
-            x, y: Coordinates of the updated cell
+            position: Coordinates of the updated cell
             tile_value: Updated tile value containing wall information
         """
-        # Create a Tile object from the tile_value
-        tile = int_to_tile(tile_value)
-        
         # Extract wall information from the Tile object
         walls = {
             'right': tile.has_right_wall,
@@ -234,8 +235,6 @@ class Map:
             'top': tile.has_top_wall
         }
 
-        position = Point(x, y)
-        
         # Define a mapping from direction + action to the wall that would block it
         # Format: {direction: {action: wall_location}}
         blocking_walls = {
@@ -286,7 +285,7 @@ class Map:
                 if action in node.children:
                     del node.children[action]
 
-    def get_trajectory_tree(self, position, direction=None):
+    def create_trajectory_tree(self, position, direction=None):
         """
         Create a trajectory tree starting from a specific position and direction.
 
@@ -304,5 +303,7 @@ class Map:
         # Create a trajectory tree with the current map's registry
         tree = TrajectoryTree(position, direction, self.size)
         tree.registry = self.registry  # Use the map's registry with wall information
+
+        self.trees.append(tree)
 
         return tree
