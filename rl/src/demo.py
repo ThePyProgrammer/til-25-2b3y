@@ -10,8 +10,7 @@ import cv2
 import matplotlib.pyplot as plt
 from moviepy.editor import ImageSequenceClip
 
-# Add paths for imports
-sys.path.append(str(pathlib.Path(os.getcwd()).parent.resolve() / "til-25-environment"))
+sys.path.append(str(pathlib.Path(os.getcwd()).parent.parent.resolve() / "til-25-environment"))
 sys.path.append(str(pathlib.Path(os.getcwd()).resolve()))
 
 from til_environment import gridworld
