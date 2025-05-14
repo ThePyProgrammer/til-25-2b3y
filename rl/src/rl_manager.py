@@ -4,6 +4,8 @@
 # import os
 # import pathlib
 import random
+from typing import Any
+
 import numpy as np
 
 # Add paths for imports
@@ -13,6 +15,7 @@ import numpy as np
 from grid.map import Map
 from grid.utils import Point
 from grid.map import Direction
+from grid.pathfinder import Pathfinder, PathfinderConfig
 
 
 class RLManager:
@@ -22,14 +25,22 @@ class RLManager:
         # configurations.
         self.role = None  # 'scout' or 'guard'
         self.recon_map = Map()
+
+        self.pathfinder = Pathfinder(
+            self.recon_map,
+            PathfinderConfig(
+                use_viewcone = False,
+            )
+        )
+
         self.initialized = False
         self.last_step = -1
-        # Seed for reproducibility
+
         self.seed = 42
         random.seed(self.seed)
         np.random.seed(self.seed)
 
-    def rl(self, observation: dict[str, int | list[int]] | np.ndarray) -> int:
+    def rl(self, observation: dict[str, Any]) -> int:
         """Gets the next action for the agent, based on the observation.
 
         Args:
@@ -48,7 +59,7 @@ class RLManager:
                 self.recon_map = Map()
 
             self.last_step = current_step
-            
+
         observation['viewcone'] = np.array(observation['viewcone'], dtype=np.uint8)
         observation['location'] = np.array(observation['location'], dtype=np.uint8)
         observation['direction'] = int(observation['direction'])
@@ -79,15 +90,13 @@ class RLManager:
 
                 self.recon_map(observation)
 
-                action = self.recon_map.get_optimal_action(
+                action = self.pathfinder.get_optimal_action(
                     Point(location[0], location[1]),
-                    Direction(direction), 
+                    Direction(direction),
                     tree_index=0
                 )
-
-                # Get optimal action from the map
                 return int(action)
             except Exception as e:
-            print(f"Error in guard logic: {e}")
-            # Fallback to random action if there's an error
-            return random.choice([0, 1, 2, 3])
+                print(f"Error in guard logic: {e}")
+                # Fallback to random action if there's an error
+                return random.choice([0, 1, 2, 3])

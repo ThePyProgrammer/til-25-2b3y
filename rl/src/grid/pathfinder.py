@@ -9,6 +9,11 @@ from .node import DirectionalNode
 
 @dataclass
 class PathfinderConfig:
+    """Configuration for the Pathfinder class.
+
+    Attributes:
+        use_viewcone: Whether to use viewcone for action selection. If False, only path efficiency is considered.
+    """
     use_viewcone: bool = False
 
 class Pathfinder:
@@ -32,6 +37,9 @@ class Pathfinder:
         """
         Get the optimal action to take from the current position and direction.
         Prioritizes seeing tiles with high probability densities, then reaching reward positions.
+
+        Behavior is modified by PathfinderConfig options:
+        - use_viewcone: When True, considers field of view in action selection
 
         Args:
             position: Current position of the agent
@@ -61,7 +69,7 @@ class Pathfinder:
 
             if candidate_actions:
                 if self.config.use_viewcone:
-                    return self._select_action_for_best_view(candidate_actions, tree.probability_density)
+                    raise NotImplementedError("use_viewcone is not implemented")
                 else:
                     # If not using viewcone, just pick the first available action
                     return candidate_actions[0][0]
@@ -85,7 +93,7 @@ class Pathfinder:
 
             if candidate_actions:
                 if self.config.use_viewcone:
-                    return self._select_action_for_best_view(candidate_actions, tree.probability_density)
+                    raise NotImplementedError("use_viewcone is not implemented")
                 else:
                     # If not using viewcone, just pick the first available action
                     return candidate_actions[0][0]
@@ -226,8 +234,8 @@ class Pathfinder:
                 # Calculate view score if using viewcone
                 view_score = 0
                 if self.config.use_viewcone:
-                    view_tiles = self._get_viewcone_tiles(node.position, node.direction)
-                    view_score = self._calculate_view_score(view_tiles, probability_density)
+                    raise NotImplementedError("use_viewcone is not implemented")
+                    # view_tiles = self._get_viewcone_tiles(node.position, node.direction)
 
                 # Store action with its scores
                 scored_actions.append((first_action, node, view_score, path_ratio))
@@ -247,75 +255,14 @@ class Pathfinder:
         # Return the best action
         return scored_actions[0][0]
 
-    def _calculate_view_score(self, view_tiles, probability_density):
-        """
-        Calculates the view score based on probability densities and unexplored tiles in the viewcone.
-
-        Args:
-            view_tiles: List of Point objects representing positions in the viewcone
-            probability_density: 2D array of probability densities from the trajectory tree
-
-        Returns:
-            float: Score representing the exploration value of the viewcone
-        """
-        view_score = 0
-
-        # Count unexplored tiles in viewcone and weight by probability density
-        for tile_pos in view_tiles:
-            # Skip tiles outside grid boundaries
-            if (tile_pos.x < 0 or tile_pos.x >= self.map.size or
-                tile_pos.y < 0 or tile_pos.y >= self.map.size):
-                continue
-
-            # Get the probability density for this tile
-            # Note: probability_density array is indexed as [y, x]
-            prob_value = probability_density[tile_pos.y, tile_pos.x]
-
-            view_score += prob_value * 10
-
-        return view_score
-
-    def _select_action_for_best_view(self, candidate_actions, probability_density):
-        """
-        Selects the action that maximizes the guard's field of view from candidate actions,
-        prioritizing tiles with high probability density.
-
-        The guard's viewcone is shaped like:
-        - 4 tiles forward
-        - 2 tiles to the left, right, and backward
-        - Making the viewcone 7x5 in total
-
-        Args:
-            candidate_actions: List of tuples (action, resulting_node) with same reward/distance ratio
-            probability_density: 2D array of probability densities from the trajectory tree
-
-        Returns:
-            Action: The action that maximizes view of high probability areas
-        """
-        best_action = candidate_actions[0][0]  # Default to first action
-        max_view_score = -1
-
-        for action, node in candidate_actions:
-            # Get all tiles in the potential view cone
-            view_tiles = self._get_viewcone_tiles(node.position, node.direction)
-
-            # Calculate view score considering probability density
-            view_score = self._calculate_view_score(view_tiles, probability_density)
-
-            # Update best action if better view score found
-            if view_score > max_view_score:
-                max_view_score = view_score
-                best_action = action
-
-        return best_action
-
-    def _get_viewcone_tiles(self, position, direction):
+    def _get_viewcone_tiles(self, position: Point, direction: Direction) -> list[Point]:
         """
         Returns a list of tile positions in the viewcone from a given position and direction.
 
-        The viewcone is 7x5:
+        The viewcone is 7x5, stretching out:
         - 4 tiles forward
         - 2 tiles to the left, right, and backward
+        for a total of 35 tiles.
 
         Args:
             position: Position of the agent
@@ -326,6 +273,28 @@ class Pathfinder:
         """
         viewcone_tiles = []
 
-        # define logic here
+        if direction == Direction.RIGHT:
+            # Forward = +x, width along y-axis
+            for dx in range(-2, 5):  # -2 to 4 (2 back, position, 4 forward)
+                for dy in range(-2, 3):  # -2 to 2 (2 up, position, 2 down)
+                    viewcone_tiles.append(Point(position.x + dx, position.y + dy))
+
+        elif direction == Direction.LEFT:
+            # Forward = -x, width along y-axis
+            for dx in range(-4, 3):  # -4 to 2 (4 forward, position, 2 back)
+                for dy in range(-2, 3):  # -2 to 2 (2 up, position, 2 down)
+                    viewcone_tiles.append(Point(position.x + dx, position.y + dy))
+
+        elif direction == Direction.DOWN:
+            # Forward = +y, width along x-axis
+            for dy in range(-2, 5):  # -2 to 4 (2 back, position, 4 forward)
+                for dx in range(-2, 3):  # -2 to 2 (2 left, position, 2 right)
+                    viewcone_tiles.append(Point(position.x + dx, position.y + dy))
+
+        elif direction == Direction.UP:
+            # Forward = -y, width along x-axis
+            for dy in range(-4, 3):  # -4 to 2 (4 forward, position, 2 back)
+                for dx in range(-2, 3):  # -2 to 2 (2 left, position, 2 right)
+                    viewcone_tiles.append(Point(position.x + dx, position.y - dy))
 
         return viewcone_tiles
