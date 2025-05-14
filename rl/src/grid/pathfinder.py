@@ -17,8 +17,10 @@ class PathfinderConfig:
 
     Attributes:
         use_viewcone: Whether to use viewcone for action selection. If False, only path efficiency is considered.
+        use_path_density: Whether to use path density instead of the default (random walk) probability density
     """
     use_viewcone: bool = False
+    use_path_density: bool = False
 
 class Pathfinder:
     def __init__(
@@ -37,7 +39,13 @@ class Pathfinder:
     def trees(self) -> list[TrajectoryTree]:
         return self.map.trees
 
-    def get_optimal_action(self, position: Point, direction: Direction, tree_index: int = 0) -> Action:
+    def get_optimal_action(
+        self,
+        position: Point,
+        direction: Direction,
+        tree_index: int = 0,
+        destination: Optional[Point] = None,
+    ) -> Action:
         """
         Get the optimal action to take from the current position and direction.
         Prioritizes seeing tiles with high probability densities, then reaching reward positions.
@@ -49,19 +57,26 @@ class Pathfinder:
             position: Current position of the agent
             direction: Current direction the agent is facing
             tree_index: Index of the trajectory tree to use
+            destination: Path find to some point instead of using the tree
 
         Returns:
             Action: The optimal action to take
         """
-        # Validate and get trajectory tree
-        tree = self._validate_and_get_tree(tree_index)
-        self.density: NDArray[np.float32] = tree.probability_density
+        if destination is None:
+            # Validate and get trajectory tree
+            tree = self._validate_and_get_tree(tree_index)
+            self.density: NDArray[np.float32] = tree.probability_density
+        elif isinstance(destination, Point):
+            self.density: NDArray[np.float32] = np.zeros((self.map.size, self.map.size), dtype=np.float32)
+            self.density[destination.y, destination.x] = 1
+        else:
+            raise TypeError(f"destination should be of type Optional[Point] not {type(destination)}")
 
         # Get the current node from the registry
         start_node = self.registry.get_or_create_node(position, direction)
 
         # Find positions with rewards
-        reward_positions = self._find_reward_positions(tree)
+        reward_positions = self._find_reward_positions()
 
         # If no rewards found, return an action that maximizes visibility of high probability areas
         if not reward_positions:
@@ -112,7 +127,7 @@ class Pathfinder:
             raise ValueError(f"Invalid tree_index: {tree_index}. Only {len(self.trees)} trees available.")
         return self.trees[tree_index]
 
-    def _find_reward_positions(self, tree) -> list[tuple[Point, float]]:
+    def _find_reward_positions(self) -> list[tuple[Point, float]]:
         """Finds all positions with positive rewards in the reward density."""
         reward_positions = []
 
