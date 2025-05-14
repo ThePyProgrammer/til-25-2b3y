@@ -1,3 +1,8 @@
+## Optimizations
+
+- lru caching improves by ~25%
+
+
 ## todo
 
 - [x] create a proper replay buffer (autoregressive style?)

@@ -18,13 +18,6 @@ from .geometry import (
     view_to_world
 )
 
-from .profiler import (
-    profile,
-    profile_section,
-    start_profiling,
-    stop_profiling
-)
-
 # Make everything available at the top level
 __all__ = [
     # Enums
@@ -42,10 +35,4 @@ __all__ = [
     'Point',
     'get_hash',
     'view_to_world',
-    
-    # Profiler
-    'profile',
-    'profile_section',
-    'start_profiling',
-    'stop_profiling'
 ]
