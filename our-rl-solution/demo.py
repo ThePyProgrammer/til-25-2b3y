@@ -33,6 +33,8 @@ def parse_arguments():
                         help='Record simulation and create videos')
     parser.add_argument('--fps', type=int, default=5,
                         help='Frames per second in output videos (only used with --record)')
+    parser.add_argument('--profile', action='store_true',
+                        help='Enable profiling of the code')
     return parser.parse_args()
 
 def create_output_dirs():
@@ -53,8 +55,8 @@ def create_output_dirs():
 def normalize_proba_density(proba_density, output_dir):
     """Normalize probability density for visualization and return BGR image with consistent size"""
     # Define a consistent output size
-    output_size = (200, 200)
-    
+    output_size = (600, 600)
+
     if proba_density is None or np.max(proba_density) == 0:
         return np.zeros((output_size[0], output_size[1], 3), dtype=np.uint8)
 
@@ -63,23 +65,23 @@ def normalize_proba_density(proba_density, output_dir):
 
     # Create a colormap
     cmap = plt.get_cmap('hot')
-    
+
     # Apply colormap to the normalized data (returns RGBA)
     colored_data = cmap(normalized)
-    
+
     # Convert from RGBA to RGB and then to 8-bit
     rgb_data = (colored_data[:, :, :3] * 255).astype(np.uint8)
-    
+
     # Convert RGB to BGR for OpenCV
     bgr_data = cv2.cvtColor(rgb_data, cv2.COLOR_RGB2BGR)
-    
+
     # Resize to consistent dimensions
-    resized_bgr = cv2.resize(bgr_data, output_size, interpolation=cv2.INTER_LINEAR)
-    
+    resized_bgr = cv2.resize(bgr_data, output_size, interpolation=cv2.INTER_NEAREST)
+
     # Draw a border around the image to make it more visible
     border_size = 2
     cv2.rectangle(resized_bgr, (0, 0), (output_size[0]-1, output_size[1]-1), (255, 255, 255), border_size)
-    
+
     return resized_bgr
 
 def resize_preserve_aspect_ratio(image, target_height):
@@ -102,7 +104,7 @@ def combine_views(views, labels):
         processed_views.append(processed_view)
 
     # Find common height (use the smallest height)
-    target_height = min(view.shape[0] for view in processed_views)
+    target_height = max(view.shape[0] for view in processed_views)
 
     # Resize all views to have the same height while preserving aspect ratio
     resized_views = [resize_preserve_aspect_ratio(view, target_height) for view in processed_views]
@@ -130,7 +132,7 @@ def create_video(frames, output_path, fps=5):
         return
 
     height, width = frames[0].shape[:2]
-    
+
     # Ensure all frames have the same size
     processed_frames = []
     for frame in frames:
@@ -139,15 +141,15 @@ def create_video(frames, output_path, fps=5):
             if frame.shape[0] != height or frame.shape[1] != width:
                 frame = cv2.resize(frame, (width, height))
             processed_frames.append(frame)
-    
+
     if not processed_frames:
         print(f"No valid frames to create video at {output_path}")
         return
-    
+
     # Make sure output path has .mp4 extension
     if not output_path.lower().endswith('.mp4'):
         output_path = f"{output_path}.mp4"
-        
+
     # Convert BGR (OpenCV) to RGB (MoviePy) if needed
     rgb_frames = []
     for frame in processed_frames:
@@ -155,75 +157,25 @@ def create_video(frames, output_path, fps=5):
             # Assume BGR format from OpenCV, convert to RGB for MoviePy
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             rgb_frames.append(rgb_frame)
-    
+
     # Try using MoviePy (preferred method)
     try:
         # Create clip from frames
         clip = ImageSequenceClip(rgb_frames, fps=fps)
 
         # Write video file
-        clip.write_videofile(output_path, codec='libx264', fps=fps)
+        clip.write_videofile(output_path, codec="libx264", fps=fps)
         print(f"Video saved to {output_path} using MoviePy")
         return
     except Exception as e:
         print(f"MoviePy approach failed with error: {e}. Trying fallback methods...")
-    
-    # Fallback to OpenCV if MoviePy fails
-    try:
-        fourcc = cv2.VideoWriter_fourcc(*'avc1')  # H.264 codec
-        video = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-
-        # Check if video writer was initialized properly
-        if not video.isOpened():
-            raise Exception("Failed to initialize video writer with avc1 codec")
-
-        # Write all frames
-        for frame in processed_frames:
-            video.write(frame)
-
-        video.release()
-        print(f"Video saved to {output_path} using H.264 codec")
-
-    except Exception as e:
-        print(f"Error with H.264 codec: {e}")
-        print("Falling back to default codec...")
-
-        # Try with default MPEG-4 codec as fallback
-        try:
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            video = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-
-            for frame in processed_frames:
-                video.write(frame)
-
-            video.release()
-            print(f"Video saved to {output_path} using fallback codec")
-
-        except Exception as e2:
-            print(f"Error with fallback codec: {e2}")
-            print("Trying with MJPG codec and AVI format...")
-
-            # Last resort: MJPG codec with AVI container (very compatible)
-            try:
-                avi_path = os.path.splitext(output_path)[0] + ".avi"
-                fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-                video = cv2.VideoWriter(avi_path, fourcc, fps, (width, height))
-
-                for frame in processed_frames:
-                    video.write(frame)
-
-                video.release()
-                print(f"Video saved to {avi_path} using MJPG codec")
-
-            except Exception as e3:
-                print(f"All codec attempts failed: {e3}")
-                print("Consider saving individual frames only.")
 
 def main():
     # Parse arguments
     args = parse_arguments()
 
-    start_profiling()
+    if args.profile:
+        start_profiling()
 
     # Set all seeds for reproducibility
     seed = args.seed
@@ -340,7 +292,8 @@ def main():
 
     env.close()
 
-    stop_profiling(sort_by=1, lines=50)
+    if args.profile:
+        stop_profiling(sort_by=1, lines=50)
 
     # Create videos if recording was enabled
     if args.record and dirs:
