@@ -15,6 +15,7 @@ sys.path.append(str(pathlib.Path(os.getcwd()).resolve()))
 
 from til_environment import gridworld
 from grid.map import Map
+from grid.pathfinder import Pathfinder, PathfinderConfig
 from utils.profiler import start_profiling, stop_profiling
 from grid.utils import Point
 from grid.map import Direction
@@ -188,6 +189,11 @@ def main():
     recon_map = Map()
     recon_map.create_trajectory_tree(Point(0, 0))
 
+    pathfinder_conf = PathfinderConfig(
+        use_viewcone = False
+    )
+    pathfinder = Pathfinder(recon_map, pathfinder_conf)
+
     # Initialize environment with specified seed
     env = gridworld.env(
         env_wrappers=[],
@@ -248,7 +254,7 @@ def main():
             print(f"Step {step}/{args.steps} - Processing time: {elapsed_time:.6f} seconds")
 
             # Recording logic if enabled
-            if args.record:
+            if args.record and dirs:
                 # Get the three views
                 oracle_view = env.render()  # RGB format
                 reconstructed_map = MapVisualizer(recon_map).render(human_mode=False)  # BGR format
@@ -281,7 +287,7 @@ def main():
             # Get next action
             location = observation['location']
             direction = observation['direction']
-            action = int(recon_map.get_optimal_action(Point(location[0], location[1]), Direction(direction), 0))
+            action = int(pathfinder.get_optimal_action(Point(location[0], location[1]), Direction(direction), 0))
         else:
             # Use the seeded numpy random generator for deterministic sampling
             action_space = env.action_space(agent)
