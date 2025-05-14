@@ -114,7 +114,7 @@ class Map:
                     # Clear agent bits when processing the agent's own position in viewcone
                     if i == 2 and j == 2:
                         # Clear bits 2-3 (agent bits) but keep all other bits
-                        rotated_tile_value = rotated_tile_value & ~0b1100
+                        rotated_tile_value = rotated_tile_value & 0b11110011  # Use explicit mask instead of ~0b1100
 
                     info = (Point(x, y), Tile(rotated_tile_value))
                     observed_cells.append(info)
