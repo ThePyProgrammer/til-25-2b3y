@@ -311,6 +311,12 @@ class TrajectoryTree:
 
         # Add expansion cache for memoization
         self.expansion_cache: dict[DirectionalNode, dict[Action, DirectionalNode]] = {}
+        
+        # Add a set to track ambiguous tiles (visited tiles we should ignore for pruning)
+        self.ambiguous_tiles = set()
+        
+        # Flag to track if we've performed a reset (detected agent) yet
+        self.has_reset = False
 
     def _register_trajectory_in_index(self, trajectory):
         """Register a trajectory in the position index."""
@@ -364,6 +370,9 @@ class TrajectoryTree:
             self.trajectories = self._get_valid_trajectories()
             return
 
+        # Track newly discovered ambiguous tiles
+        self._track_ambiguous_tiles(information)
+
         if seeking_scout:
             self._prune_by_tile_content(information)
             self.trajectories = self._get_valid_trajectories()
@@ -377,6 +386,18 @@ class TrajectoryTree:
 
     def _reset_trajectories_for_agent(self, agent_position):
         """Reset all trajectories to start from the agent position."""
+        # If this is not the first reset, mark all currently known empty tiles as ambiguous
+        if self.has_reset:
+            # Add all currently tracked empty/visited tiles to ambiguous_tiles
+            for trajectory in self.trajectories:
+                for node in trajectory.nodes:
+                    position = node.position
+                    if position != agent_position:  # Don't mark agent's current position as ambiguous
+                        self.ambiguous_tiles.add(position)
+        else:
+            # First reset - set the flag
+            self.has_reset = True
+            
         # Clear existing trajectories and their index
         self._clear_all_trajectories()
 
@@ -390,6 +411,23 @@ class TrajectoryTree:
         # Update edge trajectories
         self.edge_trajectories = self.trajectories.copy()
 
+    def _track_ambiguous_tiles(self, information):
+        """Track newly discovered empty tiles as ambiguous if we've already had a reset."""
+        if not self.has_reset:
+            return  # Only track ambiguous tiles after the first reset
+            
+        for position, tile in information:
+            if tile.is_empty:  # Newly discovered visited/empty tile
+                self.ambiguous_tiles.add(position)
+    
+    def debug_ambiguous_tiles(self):
+        """Print debug information about ambiguous tiles."""
+        print(f"Has reset: {self.has_reset}")
+        print(f"Number of ambiguous tiles: {len(self.ambiguous_tiles)}")
+        if self.ambiguous_tiles:
+            print(f"Ambiguous tile positions: {sorted(self.ambiguous_tiles)}")
+        print(f"Number of trajectories: {len(self.trajectories)}")
+    
     def _prune_by_tile_content(self, information):
         """Prune trajectories based on tile content."""
         # Group positions by condition to avoid redundant iterations
@@ -397,6 +435,10 @@ class TrajectoryTree:
         positions_must_contain = []  # Positions trajectories MUST contain
 
         for position, tile in information:
+            # Skip any tiles that are in our ambiguous set
+            if position in self.ambiguous_tiles:
+                continue
+                
             # Case 2: not visited - remove trajectories containing this position
             if tile.is_visible and (tile.is_recon or tile.is_mission):
                 positions_to_exclude.append(position)
