@@ -1,4 +1,6 @@
+from functools import lru_cache
 from dataclasses import dataclass
+
 from .enums import TileContent, Agent, Direction, Wall
 
 
@@ -146,7 +148,7 @@ class Tile:
     def __repr__(self) -> str:
         return f"Tile({self.value:#x})"  # Show hex value in representation
 
-
+@lru_cache(maxsize=1024)
 def rotate_wall_bits(tile_value, direction):
     """
     Rotates the wall bits based on the agent's direction to maintain global orientation.

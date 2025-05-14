@@ -428,7 +428,7 @@ class Map:
 
         return reward_positions
 
-    def _get_default_action(self, node):
+    def _get_default_action(self, node: DirectionalNode):
         """Returns a default valid action from the given node."""
         # Return a valid action if possible
         for action in Action:

@@ -3,7 +3,7 @@ from typing import Optional
 
 import numpy as np
 
-from .utils import Direction, Action, Point, Tile, profile
+from .utils import Direction, Action, Point, Tile
 from .node import NodeRegistry, DirectionalNode
 
 
@@ -107,7 +107,6 @@ class Trajectory:
         for traj in self._inherits_to.values():
             traj.mark_as_invalid(invalid_action_idx)
 
-    @profile
     def get_last_node(self):
         """
         Get the last node in the trajectory.

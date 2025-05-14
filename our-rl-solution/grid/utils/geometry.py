@@ -10,6 +10,10 @@ from .enums import Direction
 def get_position_hash(x, y):
     return hash((x, y))
 
+@lru_cache(maxsize=256)
+def get_eq_hash(a, b):
+    return a == b
+
 @dataclass
 class Point:
     x: int
@@ -18,11 +22,7 @@ class Point:
     def __eq__(self, other):
         if not isinstance(other, Point):
             return False
-        return self._eq_impl(other.x, other.y)
-
-    @lru_cache(maxsize=256)
-    def _eq_impl(self, x, y):
-        return self.x == x and self.y == y
+        return get_eq_hash(self.x, other.x) and get_eq_hash(self.y, other.y)
 
     def __hash__(self):
         return get_position_hash(self.x, self.y)
