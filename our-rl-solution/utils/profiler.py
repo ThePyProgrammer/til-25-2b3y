@@ -14,7 +14,7 @@ def start_profiling():
     _profiler.enable()
     return _profiler
 
-def stop_profiling(print_stats=True, sort_by='cumulative', lines=20):
+def stop_profiling(print_stats=True, sort_by='time', lines=20):
     """Stop profiling and optionally print stats"""
     global _profiler
     if _profiler is not None:
@@ -36,7 +36,7 @@ def profile_section(section_name):
         # If global profiler is active, just yield without profiling
         yield
         return
-        
+
     # Otherwise, profile the section
     pr = cProfile.Profile()
     pr.enable()
@@ -57,7 +57,7 @@ def profile(func):
         if _profiler is not None:
             # If global profiler is active, just run the function without profiling
             return func(*args, **kwargs)
-        
+
         # Otherwise, profile the function
         pr = cProfile.Profile()
         pr.enable()
