@@ -21,4 +21,4 @@ COPY src/rl_* .
 COPY src/grid ./grid
 
 # Starts your model server.
-CMD uvicorn rl_server:app --port 5004 --host 0.0.0.0
+CMD ["uvicorn", "rl_server:app", "--port", "5004", "--host", "0.0.0.0"]

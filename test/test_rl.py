@@ -1,6 +1,18 @@
 import json
 import os
 
+
+import sys
+import pathlib
+# import random
+# import numpy as np
+
+# Add paths for imports
+sys.path.append(str(pathlib.Path(os.getcwd()).parent.resolve() / "til-25-environment"))
+
+print(str(pathlib.Path(os.getcwd()).parent.resolve() / "til-25-environment"))
+
+
 import requests
 from dotenv import load_dotenv
 from til_environment import gridworld
