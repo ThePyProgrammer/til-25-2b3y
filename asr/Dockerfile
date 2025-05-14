@@ -19,9 +19,9 @@ RUN pip install -U pip
 
 RUN pip install huggingface-hub
 
-COPY setup.py .
-RUN mkdir ./models/ && python download_model.py --model_name nvidia/parakeet-tdt-0.6b-v2 --path ./models/
-RUN rm ./setup.py
+COPY download_model.py .
+RUN mkdir ./models && python download_model.py --model_name nvidia/parakeet-tdt-0.6b-v2 --path ./models/
+RUN rm ./download_model.py
 
 RUN pip install Cython packaging
 RUN pip install nemo_toolkit["asr"]
