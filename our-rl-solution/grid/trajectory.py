@@ -1,5 +1,6 @@
-import random
 from typing import Optional
+
+import numpy as np
 
 from .utils import Direction, Action, Point, Tile
 from .node import NodeRegistry, DirectionalNode
@@ -17,7 +18,7 @@ class Trajectory:
         self.invalid_action_idx: Optional[int] = None
 
         self._inherited_from: Optional['Trajectory'] = None
-        self._inherits_to: list['Trajectory'] = []
+        self._inherits_to: dict[Action, 'Trajectory'] = {}
 
     def __hash__(self):
         return hash(tuple(self.route))
@@ -58,7 +59,6 @@ class Trajectory:
         new_trajectory.position_cache = self.position_cache.copy()
         # Set up inheritance relationship
         new_trajectory._inherited_from = self
-        self._inherits_to.append(new_trajectory)
         return new_trajectory
 
     def update(self, action):
@@ -98,8 +98,8 @@ class Trajectory:
             self.invalid = True
 
         # Propagate to all trajectories that inherit from this one
-        for trajectory in self._inherits_to:
-            trajectory.mark_as_invalid(invalid_action_idx)
+        for traj in self._inherits_to.values():
+            traj.mark_as_invalid(invalid_action_idx)
 
     def get_last_node(self):
         """
@@ -157,15 +157,18 @@ class Trajectory:
 
         # Explore all valid actions from current node
         for action, next_node in last_node.children.items():
-            # Create a new trajectory with this action
-            new_trajectory = self.copy()
-            new_trajectory.update(action)
+            if action in self._inherits_to:
+                # Create a new trajectory with this action
+                new_trajectory = self.copy()
+                new_trajectory.update(action)
 
-            # Skip if this made the trajectory invalid
-            if new_trajectory.invalid:
-                continue
+                # Skip if this made the trajectory invalid
+                if new_trajectory.invalid:
+                    continue
 
-            new_trajectories.append(new_trajectory)
+                self._inherits_to[action] = new_trajectory
+
+                new_trajectories.append(new_trajectory)
 
         return new_trajectories
 
@@ -241,7 +244,7 @@ class Trajectory:
 
     @property
     def children(self):
-        return self._inherits_to
+        return self._inherits_to.values()
 
 
 class TrajectoryTree:
@@ -548,8 +551,6 @@ class TrajectoryTree:
         Returns:
             numpy.ndarray: 2D array with probability for each position
         """
-        import numpy as np
-
         # Initialize empty grid
         density = np.zeros((self.size, self.size), dtype=np.float32)
 
@@ -589,7 +590,11 @@ class TrajectoryTree:
 
                 if parent_traj:
                     if len(parent_traj.children) > 0:
-                        parent_traj._inherits_to = [child for child in parent_traj.children if not child.invalid]
+
+                        parent_traj._inherits_to = {
+                            action: child for action, child in parent_traj._inherits_to.items()
+                            if not child.invalid
+                        }
 
     def _get_edge_trajectories(self):
         """
@@ -600,7 +605,7 @@ class TrajectoryTree:
             if traj.invalid:
                 continue
 
-            if len(traj.children) < 2:
+            if len(traj.children) < 4:
                 edge_trajectories.append(traj)
 
         return edge_trajectories
