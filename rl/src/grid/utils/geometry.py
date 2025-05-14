@@ -10,9 +10,19 @@ from .enums import Direction
 def get_position_hash(x, y):
     return hash((x, y))
 
-@lru_cache(maxsize=256)
-def get_eq(a, b):
-    return a == b
+POINT_EQ_LOOKUP = np.zeros((16, 16, 16, 16), dtype=bool)
+for i in range(16):
+    for j in range(16):
+        POINT_EQ_LOOKUP[i, i, j, j] = True
+
+# @lru_cache(maxsize=256)
+# def get_eq(a, b):
+#     # Use the lookup table for equality check
+#     if 0 <= a < 16 and 0 <= b < 16:
+#         return _EQ_LOOKUP[a, b, a, b]
+#     else:
+#         # Fall back to regular comparison for values outside our table
+#         return a == b
 
 @dataclass
 class Point:
@@ -22,7 +32,8 @@ class Point:
     def __eq__(self, other):
         if not isinstance(other, Point):
             return False
-        return get_eq(self.x, other.x) and get_eq(self.y, other.y)
+        # return get_eq(self.x, other.x) and get_eq(self.y, other.y)
+        return POINT_EQ_LOOKUP[self.x, other.x, self.y, other.y]
 
     def __hash__(self):
         return get_position_hash(self.x, self.y)
