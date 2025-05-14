@@ -1,9 +1,66 @@
 from typing import Optional
+import functools
+import cProfile
+import pstats
+import io
+from contextlib import contextmanager
 
 import numpy as np
 
 from .utils import Direction, Action, Point, Tile
 from .node import NodeRegistry, DirectionalNode
+
+# Profiling globals
+_profiler = None
+
+def start_profiling():
+    """Start profiling session"""
+    global _profiler
+    _profiler = cProfile.Profile()
+    _profiler.enable()
+    return _profiler
+
+def stop_profiling(print_stats=True, sort_by='cumulative', lines=20):
+    """Stop profiling and optionally print stats"""
+    global _profiler
+    if _profiler is not None:
+        _profiler.disable()
+        if print_stats:
+            s = io.StringIO()
+            ps = pstats.Stats(_profiler, stream=s).sort_stats(sort_by)
+            ps.print_stats(lines)
+            print(s.getvalue())
+        return _profiler
+    return None
+
+@contextmanager
+def profile_section(section_name):
+    """Context manager for profiling specific code sections"""
+    pr = cProfile.Profile()
+    pr.enable()
+    yield
+    pr.disable()
+    s = io.StringIO()
+    ps = pstats.Stats(pr, stream=s).sort_stats('cumulative')
+    print(f"\n--- Profiling results for {section_name} ---")
+    ps.print_stats(20)
+    print(s.getvalue())
+
+def profile(func):
+    """Decorator to profile a function"""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        pr = cProfile.Profile()
+        pr.enable()
+        result = func(*args, **kwargs)
+        pr.disable()
+        s = io.StringIO()
+        ps = pstats.Stats(pr, stream=s).sort_stats('cumulative')
+        print(f"\n--- Profiling results for {func.__name__} ---")
+        ps.print_stats(20)
+        print(s.getvalue())
+        return result
+    return wrapper
 
 
 class Trajectory:
@@ -157,7 +214,7 @@ class Trajectory:
 
         # Explore all valid actions from current node
         for action, next_node in last_node.children.items():
-            if action in self._inherits_to:
+            if action not in self._inherits_to:
                 # Create a new trajectory with this action
                 new_trajectory = self.copy()
                 new_trajectory.update(action)
@@ -446,15 +503,17 @@ class TrajectoryTree:
         if has_deleted_edge:
             self.edge_trajectories = self._get_edge_trajectories()
 
+    @profile
     def _get_valid_trajectories(self):
         """
         Returns a list of all valid trajectories (not marked as invalid).
 
         Returns:
-            list: List of valid trajectories
+            list[Trajectory]: Valid trajectories
         """
         return [traj for traj in self.trajectories if not traj.invalid]
 
+    @profile
     def step(self) -> int:
         """
         Expand all valid trajectories by one step, but only expanding the
@@ -480,6 +539,7 @@ class TrajectoryTree:
         before_len = len(self.trajectories)
 
         old_edge_trajectories = self.edge_trajectories
+        print(f"Updating from {len(old_edge_trajectories)} trajectories")
         self.edge_trajectories = []  # Clear edge trajectories for this step
 
         # Mapping of endpoint keys to trajectories
