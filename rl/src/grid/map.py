@@ -94,10 +94,6 @@ class Map:
                 # Create a Tile instance for easy property access
                 tile = Tile(tile_value)
 
-                # Skip tiles with no vision, possible to hear agents without vision
-                if not tile.is_visible and not tile.has_scout and not tile.has_guard:
-                    continue
-
                 # Convert viewcone coordinates to world coordinates
                 # Agent is at position (2, 2) in the viewcone
                 view_coord = np.array([i - 2, j - 2])  # Offset from agent position in viewcone
@@ -107,7 +103,7 @@ class Map:
                 x, y = int(world_coord[0]), int(world_coord[1])
 
                 # Check if coordinates are within bounds
-                if (0 <= x < self.size and 0 <= y < self.size and tile_value != 0):
+                if (0 <= x < self.size and 0 <= y < self.size):
                     # Create a Tile instance and rotate its walls to maintain global orientation
                     rotated_tile_value = rotate_wall_bits(tile_value, direction)
 
@@ -119,15 +115,17 @@ class Map:
                     info = (Point(x, y), Tile(rotated_tile_value))
                     observed_cells.append(info)
 
-                    # Check if wall information has changed
-                    old_value = self.map[x, y]
-                    if old_value != rotated_tile_value:
-                        # Wall configuration might have changed
-                        updated_cells.append(info)
+                    # Skip tiles with no vision
+                    if tile.is_visible:
+                        # Check if wall information has changed
+                        old_value = self.map[x, y]
+                        if old_value != rotated_tile_value:
+                            # Wall configuration might have changed
+                            updated_cells.append(info)
 
-                    # Update map with tile information
-                    self.map[x, y] = rotated_tile_value
-                    self.viewed[x, y] = True
+                        # Update map with tile information
+                        self.map[x, y] = rotated_tile_value
+                        self.viewed[x, y] = True
                     self.last_updated[x, y] = self.step_counter  # Record when this cell was updated
 
         # Update node connections for cells with updated wall information

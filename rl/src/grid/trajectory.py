@@ -373,6 +373,7 @@ class TrajectoryTree:
         1. when I encounter the agent, I can destroy all trajectories since the agent's position is known
         2. when I encounter a tile that has not been visited, I remove all trajectories containing that tile (when seeking scout)
         3. when I encounter a tile that has been visited, I remove all trajectories not containing that tile (when seeking scout)
+        4. when I encounter a tile is not visible and has no agent, I remove all trajectories ending with that tile (when seeking scout)
 
         Args:
             information (list[tuple[Point, Tile]]): recently updated/observed tiles
@@ -448,6 +449,7 @@ class TrajectoryTree:
         # Group positions by condition to avoid redundant iterations
         positions_to_exclude = []  # Positions trajectories should NOT contain
         positions_must_contain = []  # Positions trajectories MUST contain
+        positions_no_ending = []    # Positions trajectories should NOT end at (Case 4)
 
         for position, tile in information:
             # Skip any tiles that are in our ambiguous set
@@ -460,20 +462,30 @@ class TrajectoryTree:
             # Case 3: visited - only keep trajectories containing this position
             if tile.is_empty:
                 positions_must_contain.append(position)
+            # Case 4: not visible and no agent - remove trajectories ending at this position
+            if not tile.is_visible and not (tile.has_guard or tile.has_scout):
+                positions_no_ending.append(position)
 
         # Use the spatial index for efficient filtering
-        if not positions_to_exclude and not positions_must_contain:
+        if not positions_to_exclude and not positions_must_contain and not positions_no_ending:
             return  # No filtering needed
 
-        self._apply_filtering(positions_to_exclude, positions_must_contain)
+        self._apply_filtering(positions_to_exclude, positions_must_contain, positions_no_ending)
 
-    def _apply_filtering(self, positions_to_exclude, positions_must_contain):
+    def _apply_filtering(self, positions_to_exclude, positions_must_contain, positions_no_ending):
         """Apply filtering based on position constraints."""
         # Find trajectories to exclude (has any excluded position)
         trajectories_to_remove = set()
         for position in positions_to_exclude:
             if position in self.position_index:
                 trajectories_to_remove.update(self.position_index[position])
+
+        # Find trajectories ending at positions they shouldn't (Case 4)
+        if positions_no_ending:
+            for traj in self.trajectories:
+                last_node = traj.last
+                if last_node.position in positions_no_ending:
+                    trajectories_to_remove.add(traj)
 
         # Find trajectories to keep (has all required positions)
         trajectories_to_keep = None
@@ -633,6 +645,49 @@ class TrajectoryTree:
             # Add 1 to the density at the endpoint position
             pos = last_node.position
             density[pos.y, pos.x] += 1
+
+        # Normalize to get probability density
+        total = density.sum()
+        if total > 0:
+            density = density / total
+
+        return density
+
+    @property
+    def path_density(self) -> NDArray[np.float32]:
+        """
+        Calculate a probability density over all grid positions based on entire paths.
+
+        Unlike probability_density which only considers endpoints, this method
+        distributes the probability across all nodes in each trajectory's path.
+        Each node in a trajectory gets 1/n of the trajectory's weight, where n is
+        the number of nodes in that trajectory.
+
+        Returns:
+            numpy.ndarray: 2D array with path density for each position
+        """
+        # Initialize empty grid
+        density = np.zeros((self.size, self.size), dtype=np.float32)
+
+        if not self.trajectories:
+            return density
+
+        # Distribute density across all nodes in each trajectory
+        for trajectory in self.trajectories:
+            if trajectory.to_delete:
+                continue
+
+            # Skip empty trajectories
+            if not trajectory.nodes:
+                continue
+
+            # Calculate weight per node (1 divided by number of nodes)
+            weight_per_node = 1.0 / len(trajectory.nodes)
+
+            # Add the weight to each position in the trajectory
+            for node in trajectory.nodes:
+                pos = node.position
+                density[pos.y, pos.x] += weight_per_node
 
         # Normalize to get probability density
         total = density.sum()

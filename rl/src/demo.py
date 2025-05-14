@@ -29,6 +29,8 @@ def parse_arguments():
                         help='Guard number (0 for first guard, 1 for second guard, etc.)')
     parser.add_argument('--steps', type=int, default=100,
                         help='Maximum number of steps to simulate')
+    parser.add_argument('--human', action='store_true',
+                        help='Show human view. Either --human or --record only.')
     parser.add_argument('--record', action='store_true',
                         help='Record simulation and create videos')
     parser.add_argument('--fps', type=int, default=5,
@@ -190,14 +192,14 @@ def main():
     recon_map.create_trajectory_tree(Point(0, 0))
 
     pathfinder_conf = PathfinderConfig(
-        use_viewcone = True
+        use_viewcone = False
     )
     pathfinder = Pathfinder(recon_map, pathfinder_conf)
 
     # Initialize environment with specified seed
     env = gridworld.env(
         env_wrappers=[],
-        render_mode="rgb_array" if args.record else None,  # Only need rendering if recording
+        render_mode="rgb_array" if args.record else "human" if args.human else None,  # Only need rendering if recording
         debug=True,
         novice=False,
     )
