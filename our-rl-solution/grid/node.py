@@ -1,3 +1,4 @@
+from functools import lru_cache
 import sys
 
 from .utils import Direction, Action, Point, get_hash
@@ -12,6 +13,7 @@ class NodeRegistry:
         self.nodes: dict[int, 'DirectionalNode'] = {}
         sys.setrecursionlimit(1500)
 
+    @lru_cache(maxsize=1024)
     def get_or_create_node(self, position: Point, direction: Direction) -> 'DirectionalNode':
         """Get an existing node from the registry or create a new one if it doesn't exist."""
         node_hash = get_hash(position, direction)

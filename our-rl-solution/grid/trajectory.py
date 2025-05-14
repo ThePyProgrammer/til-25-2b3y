@@ -1,67 +1,15 @@
+from functools import lru_cache
 from typing import Optional
-import functools
-import cProfile
-import pstats
-import io
-from contextlib import contextmanager
 
 import numpy as np
 
-from .utils import Direction, Action, Point, Tile
+from .utils import Direction, Action, Point, Tile, profile
 from .node import NodeRegistry, DirectionalNode
 
-# Profiling globals
-_profiler = None
 
-def start_profiling():
-    """Start profiling session"""
-    global _profiler
-    _profiler = cProfile.Profile()
-    _profiler.enable()
-    return _profiler
-
-def stop_profiling(print_stats=True, sort_by='cumulative', lines=20):
-    """Stop profiling and optionally print stats"""
-    global _profiler
-    if _profiler is not None:
-        _profiler.disable()
-        if print_stats:
-            s = io.StringIO()
-            ps = pstats.Stats(_profiler, stream=s).sort_stats(sort_by)
-            ps.print_stats(lines)
-            print(s.getvalue())
-        return _profiler
-    return None
-
-@contextmanager
-def profile_section(section_name):
-    """Context manager for profiling specific code sections"""
-    pr = cProfile.Profile()
-    pr.enable()
-    yield
-    pr.disable()
-    s = io.StringIO()
-    ps = pstats.Stats(pr, stream=s).sort_stats('cumulative')
-    print(f"\n--- Profiling results for {section_name} ---")
-    ps.print_stats(20)
-    print(s.getvalue())
-
-def profile(func):
-    """Decorator to profile a function"""
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        pr = cProfile.Profile()
-        pr.enable()
-        result = func(*args, **kwargs)
-        pr.disable()
-        s = io.StringIO()
-        ps = pstats.Stats(pr, stream=s).sort_stats('cumulative')
-        print(f"\n--- Profiling results for {func.__name__} ---")
-        ps.print_stats(20)
-        print(s.getvalue())
-        return result
-    return wrapper
-
+@lru_cache(maxsize=2**16)
+def get_trajectory_hash(root, *route):
+    return hash((root, *route))
 
 class Trajectory:
     def __init__(self, root_node):
@@ -78,7 +26,7 @@ class Trajectory:
         self._inherits_to: dict[Action, 'Trajectory'] = {}
 
     def __hash__(self):
-        return hash(tuple(self.route))
+        return get_trajectory_hash(self.root, *self.route)
 
     def __eq__(self, other):
         if not isinstance(other, Trajectory):
@@ -86,6 +34,7 @@ class Trajectory:
         return (self.root == other.root and
                 self.route == other.route)
 
+    @lru_cache(maxsize=1024+256)
     def __contains__(self, item: DirectionalNode | Point) -> bool:
         """
         Check if a DirectionalNode or Point is in this trajectory.
@@ -158,6 +107,7 @@ class Trajectory:
         for traj in self._inherits_to.values():
             traj.mark_as_invalid(invalid_action_idx)
 
+    @profile
     def get_last_node(self):
         """
         Get the last node in the trajectory.
@@ -203,7 +153,8 @@ class Trajectory:
         if self.invalid:
             return []
 
-        last_node = self.get_last_node()
+        # last_node = self.get_last_node()
+        last_node = self.nodes[-1]
         if not last_node:
             return []
 
@@ -245,7 +196,8 @@ class Trajectory:
         if self.invalid:
             return None
 
-        last_node = self.get_last_node()
+        last_node = self.nodes[-1]
+        # last_node = self.get_last_node()
         if not last_node:
             return None
 
@@ -259,7 +211,7 @@ class Trajectory:
         if self.invalid:
             return f"Invalid Trajectory: {self.route}"
 
-        last_node = self.get_last_node()
+        last_node = self.nodes[-1]
         if last_node:
             return f"Trajectory to {last_node.position} {last_node.direction} from {self.root.position} {self.root.direction} via {self.route}"
         return f"Incomplete Trajectory: {self.route}"
@@ -310,8 +262,10 @@ class TrajectoryTree:
         init_position: Point,
         init_direction: Optional[Direction] = None,
         size: int = 16,
+        registry: Optional[NodeRegistry] = None,
         consider_direction: bool = True,
-        registry: Optional[NodeRegistry] = None
+        regenerate_edge_threshold: int = 4,
+        max_backtrack: int = 3,
     ):
         """
         Initialize a TrajectoryTree with the agent's starting position and direction.
@@ -326,6 +280,9 @@ class TrajectoryTree:
         """
         self.size = size
         self.consider_direction = consider_direction
+        self.regenerate_edge_threshold = regenerate_edge_threshold
+        self.max_backtrack = max_backtrack
+
         # Create a node registry for this trajectory tree
         self.registry = registry if registry is not None else NodeRegistry(size)
 
@@ -503,7 +460,6 @@ class TrajectoryTree:
         if has_deleted_edge:
             self.edge_trajectories = self._get_edge_trajectories()
 
-    @profile
     def _get_valid_trajectories(self):
         """
         Returns a list of all valid trajectories (not marked as invalid).
@@ -513,7 +469,6 @@ class TrajectoryTree:
         """
         return [traj for traj in self.trajectories if not traj.invalid]
 
-    @profile
     def step(self) -> int:
         """
         Expand all valid trajectories by one step, but only expanding the
@@ -577,7 +532,7 @@ class TrajectoryTree:
 
         # Expand selected trajectories
         for trajectory in selected_trajectories:
-            new_trajectories = trajectory.get_new_trajectories()
+            new_trajectories = trajectory.get_new_trajectories(max_backtrack=self.max_backtrack)
             if new_trajectories:
                 # Add valid new trajectories
                 for new_traj in new_trajectories:
@@ -622,7 +577,8 @@ class TrajectoryTree:
             if trajectory.invalid:
                 continue
 
-            last_node = trajectory.get_last_node()
+            # last_node = trajectory.get_last_node()
+            last_node = trajectory.nodes[-1]
             if not last_node:
                 continue
 
@@ -665,7 +621,7 @@ class TrajectoryTree:
             if traj.invalid:
                 continue
 
-            if len(traj.children) < 4:
+            if len(traj.children) < self.regenerate_edge_threshold:
                 edge_trajectories.append(traj)
 
         return edge_trajectories

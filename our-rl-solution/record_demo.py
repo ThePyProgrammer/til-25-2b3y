@@ -20,7 +20,7 @@ from utils.state import encode_viewcone, encode_observation
 from networks.encoder import StateEncoder
 from grid.map import Map
 from grid.viz import MapVisualizer
-from grid.trajectory import TrajectoryTree
+from grid.utils import start_profiling, stop_profiling
 from grid.utils import Point, Action
 from grid.node import NodeRegistry, DirectionalNode
 from grid.map import Direction
@@ -141,6 +141,8 @@ def create_video(frames, output_path, fps=5):
 def main():
     # Parse arguments
     args = parse_arguments()
+
+    start_profiling()
 
     # Set all seeds for reproducibility
     seed = args.seed
@@ -263,6 +265,8 @@ def main():
         env.step(action)
 
     env.close()
+
+    stop_profiling(lines = 50)
 
     # Create videos from collected frames
     print("Creating videos from frames...")
