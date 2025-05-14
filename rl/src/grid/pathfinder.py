@@ -1,10 +1,14 @@
 from dataclasses import dataclass
-
+from typing import Optional
 import heapq
 
+import numpy as np
+from numpy.typing import NDArray
+
 from .map import Map
+from .trajectory import TrajectoryTree
 from .utils import Point, Direction, Action
-from .node import DirectionalNode
+from .node import DirectionalNode, NodeRegistry
 
 
 @dataclass
@@ -21,16 +25,16 @@ class Pathfinder:
         self,
         map: Map,
         config: PathfinderConfig
-    ):
+    ) -> None:
         self.map = map
         self.config = config
 
     @property
-    def registry(self):
+    def registry(self) -> NodeRegistry:
         return self.map.registry
 
     @property
-    def trees(self):
+    def trees(self) -> list[TrajectoryTree]:
         return self.map.trees
 
     def get_optimal_action(self, position: Point, direction: Direction, tree_index: int = 0) -> Action:
@@ -51,6 +55,7 @@ class Pathfinder:
         """
         # Validate and get trajectory tree
         tree = self._validate_and_get_tree(tree_index)
+        self.density: NDArray[np.float32] = tree.probability_density
 
         # Get the current node from the registry
         start_node = self.registry.get_or_create_node(position, direction)
@@ -80,7 +85,7 @@ class Pathfinder:
 
         # Choose the best action prioritizing visibility of high probability areas
         # then considering reward/distance ratio
-        best_action = self._select_best_action(reward_positions, best_paths_to_rewards, tree.probability_density)
+        best_action = self._select_best_action(reward_positions, best_paths_to_rewards)
 
         # If no path found to any reward, choose action with best view
         if best_action is None:
@@ -101,25 +106,24 @@ class Pathfinder:
 
         return best_action
 
-    def _validate_and_get_tree(self, tree_index: int):
+    def _validate_and_get_tree(self, tree_index: int) -> 'TrajectoryTree':
         """Validates the tree index and returns the corresponding tree."""
         if tree_index >= len(self.trees):
             raise ValueError(f"Invalid tree_index: {tree_index}. Only {len(self.trees)} trees available.")
         return self.trees[tree_index]
 
-    def _find_reward_positions(self, tree):
+    def _find_reward_positions(self, tree) -> list[tuple[Point, float]]:
         """Finds all positions with positive rewards in the reward density."""
         reward_positions = []
-        reward_density = tree.probability_density
 
         for y in range(self.map.size):
             for x in range(self.map.size):
-                if reward_density[y, x] > 0:
-                    reward_positions.append((Point(x, y), reward_density[y, x]))
+                if self.density[y, x] > 0:
+                    reward_positions.append((Point(x, y), self.density[y, x]))
 
         return reward_positions
 
-    def _get_default_action(self, node: DirectionalNode):
+    def _get_default_action(self, node: DirectionalNode) -> Action:
         """Returns a default valid action from the given node."""
         # Return a valid action if possible
         for action in Action:
@@ -127,7 +131,11 @@ class Pathfinder:
                 return action
         return Action.STAY  # Default if no valid actions
 
-    def _find_paths_to_rewards(self, start_node, reward_positions):
+    def _find_paths_to_rewards(
+        self,
+        start_node: DirectionalNode,
+        reward_positions: list[tuple[Point, float]]
+    ) -> dict[Point, tuple[DirectionalNode, int, Action]]:
         """
         Uses Dijkstra's algorithm to find shortest paths to all reward positions.
 
@@ -135,7 +143,7 @@ class Pathfinder:
             A dictionary mapping reward positions to (node, distance, first_action)
         """
         # Maps node hash -> (distance, first_action, previous_node_hash)
-        distances = {hash(start_node): (0, None, None)}
+        distances: dict[int, tuple[int, Optional[Action], Optional[int]]] = {hash(start_node): (0, None, None)}
         visited = set()  # Set of visited node hashes
 
         # Priority queue stores (distance, node_hash)
@@ -173,20 +181,37 @@ class Pathfinder:
 
         return best_paths_to_rewards
 
-    def _update_paths_if_at_reward(self, current_node, current_hash, current_dist,
-                                  reward_positions, distances, best_paths_to_rewards):
+    def _update_paths_if_at_reward(
+        self,
+        current_node: DirectionalNode,
+        current_hash: int,
+        current_dist: int,
+        reward_positions: list[tuple[Point, float]],
+        distances: dict[int, tuple[int, Optional[Action], Optional[int]]],
+        best_paths_to_rewards: dict[Point, tuple[DirectionalNode, int, Action]]
+    ) -> None:
         """Updates best_paths_to_rewards if the current node is at a reward position."""
         for reward_pos, reward_value in reward_positions:
             if current_node.position == reward_pos:
                 # Get the first action that led to this path
                 _, first_action, _ = distances[current_hash]
+                if first_action is None:
+                    continue
 
                 # Update best path to this reward if better
                 if reward_pos not in best_paths_to_rewards or current_dist < best_paths_to_rewards[reward_pos][1]:
                     best_paths_to_rewards[reward_pos] = (current_node, current_dist, first_action)
 
-    def _process_neighbors(self, current_node, current_hash, current_dist,
-                          start_node, distances, visited, pq):
+    def _process_neighbors(
+        self,
+        current_node: DirectionalNode,
+        current_hash: int,
+        current_dist: int,
+        start_node: DirectionalNode,
+        distances: dict[int, tuple[int, Optional[Action], Optional[int]]],
+        visited: set[int],
+        pq: list[tuple[int, int]]
+    ) -> None:
         """Processes all neighbors of the current node in Dijkstra's algorithm."""
         for action, next_node in current_node.children.items():
             next_hash = hash(next_node)
@@ -208,7 +233,11 @@ class Pathfinder:
                 # Add to priority queue
                 heapq.heappush(pq, (new_dist, next_hash))
 
-    def _select_best_action(self, reward_positions, best_paths_to_rewards, probability_density):
+    def _select_best_action(
+        self,
+        reward_positions: list[tuple[Point, float]],
+        best_paths_to_rewards: dict[Point, tuple[DirectionalNode, int, Action]]
+    ) -> Optional[Action]:
         """
         Selects the best action prioritizing visibility of tiles with high probability density,
         then considering the reward/distance ratio.

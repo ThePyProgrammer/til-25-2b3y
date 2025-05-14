@@ -2,6 +2,7 @@ from functools import lru_cache
 from typing import Optional
 
 import numpy as np
+from numpy.typing import NDArray
 
 from .utils import Direction, Action, Point, Tile
 from .node import NodeRegistry, DirectionalNode
@@ -603,7 +604,7 @@ class TrajectoryTree:
         return len(self.trajectories) - before_len
 
     @property
-    def probability_density(self):
+    def probability_density(self) -> NDArray[np.float32]:
         """
         Calculate a probability density over all grid positions.
 

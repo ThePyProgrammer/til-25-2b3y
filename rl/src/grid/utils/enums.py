@@ -21,7 +21,6 @@ class TileContent(IntEnum):
     def __repr__(self):
         return self.__str__()
 
-
 class Agent(IntEnum):
     """Enum for agent types."""
     NONE = 0
@@ -38,7 +37,6 @@ class Agent(IntEnum):
 
     def __repr__(self):
         return self.__str__()
-
 
 class Direction(IntEnum):
     """Direction enum with values matching the environment."""
@@ -60,6 +58,13 @@ class Direction(IntEnum):
     def __repr__(self):
         return self.__str__()
 
+    def turn_right(self):
+        """Returns the direction after turning right (clockwise)."""
+        return Direction((self.value + 1) % 4)
+
+    def turn_left(self):
+        """Returns the direction after turning left (counterclockwise)."""
+        return Direction((self.value - 1) % 4)
 
 class Action(IntEnum):
     """Action enum with values matching the environment."""
@@ -81,7 +86,6 @@ class Action(IntEnum):
 
     def __repr__(self):
         return self.__str__()
-
 
 @dataclass
 class Wall:

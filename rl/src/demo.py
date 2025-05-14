@@ -190,7 +190,7 @@ def main():
     recon_map.create_trajectory_tree(Point(0, 0))
 
     pathfinder_conf = PathfinderConfig(
-        use_viewcone = False
+        use_viewcone = True
     )
     pathfinder = Pathfinder(recon_map, pathfinder_conf)
 
@@ -247,6 +247,11 @@ def main():
             start_time = time.time()
             recon_map(observation)
 
+            # Get next action
+            location = observation['location']
+            direction = observation['direction']
+            action = int(pathfinder.get_optimal_action(Point(location[0], location[1]), Direction(direction), 0))
+
             elapsed_time = time.time() - start_time
             execution_times.append(elapsed_time)
 
@@ -283,11 +288,6 @@ def main():
                 frames_combined.append(combined_frame)
 
                 cv2.imwrite(os.path.join(dirs['frames_combined'], f"frame_{step:04d}.png"), combined_frame)
-
-            # Get next action
-            location = observation['location']
-            direction = observation['direction']
-            action = int(pathfinder.get_optimal_action(Point(location[0], location[1]), Direction(direction), 0))
         else:
             # Use the seeded numpy random generator for deterministic sampling
             action_space = env.action_space(agent)
