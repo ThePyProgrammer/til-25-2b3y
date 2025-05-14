@@ -21,6 +21,8 @@ class Trajectory:
         self.invalid: bool = False
         self.invalid_action_idx: Optional[int] = None
 
+        self.pruned: bool = False
+
         self._inherited_from: Optional['Trajectory'] = None
         self._inherits_to: dict[Action, 'Trajectory'] = {}
 
@@ -75,7 +77,15 @@ class Trajectory:
         # Check if this action is valid
         self.get_last_node()
 
-    def mark_as_invalid(self, invalid_action_idx: Optional[int] = None):
+    def prune(self):
+        self.pruned = True
+
+    def invalidate(self, propagate=False):
+        self.invalid = True
+        if propagate:
+            self._mark_as_invalid()
+
+    def _mark_as_invalid(self, invalid_action_idx: Optional[int] = None):
         """
         Mark this trajectory as invalid and propagate to inheriting trajectories.
 
@@ -95,7 +105,7 @@ class Trajectory:
 
                 # If this has a parent trajectory, check if the parent should be invalidated
                 if self._inherited_from is not None:
-                    self._inherited_from.mark_as_invalid(invalid_action_idx)
+                    self._inherited_from._mark_as_invalid(invalid_action_idx)
             else:
                 return
         else:
@@ -103,7 +113,7 @@ class Trajectory:
 
         # Propagate to all trajectories that inherit from this one
         for traj in self._inherits_to.values():
-            traj.mark_as_invalid(invalid_action_idx)
+            traj._mark_as_invalid()
 
     def get_last_node(self):
         """
@@ -126,7 +136,7 @@ class Trajectory:
             if action in current_node.children:
                 current_node = current_node.children[action]
             else:
-                self.mark_as_invalid(i)  # Mark invalid at the specific action index
+                self._mark_as_invalid(i)  # Mark invalid at the specific action index
                 return None
 
             if populate_nodes:
@@ -254,6 +264,10 @@ class Trajectory:
     @property
     def children(self):
         return self._inherits_to.values()
+
+    @property
+    def to_delete(self):
+        return self.invalid or self.pruned
 
 
 class TrajectoryTree:
@@ -486,15 +500,14 @@ class TrajectoryTree:
         # Remove invalid trajectories from the index
         removed_trajectories = set(self.trajectories) - set(valid_trajectories)
         for traj in removed_trajectories:
-            traj.mark_as_invalid()
+            traj.invalidate()
             self._unregister_trajectory_from_index(traj)
 
         self._destroy_trajectory_families()
         self.trajectories = valid_trajectories
 
-        # Update edge trajectories - use a set operation for efficiency
+        # whether any edge trajectories have been deleted, may want to re-add them.
         trajectory_set = set(self.trajectories)
-
         has_deleted_edge = False
         for traj in self.edge_trajectories:
             if traj not in trajectory_set:
@@ -547,7 +560,7 @@ class TrajectoryTree:
         # Group trajectories by their endpoints
         for traj in old_edge_trajectories:
             # Skip invalid trajectories
-            if traj.invalid:
+            if traj.to_delete:
                 continue
 
             # Get key for this trajectory's endpoint
@@ -608,7 +621,7 @@ class TrajectoryTree:
 
         # Count trajectories passing through each cell
         for trajectory in self.trajectories:
-            if trajectory.invalid:
+            if trajectory.to_delete:
                 continue
 
             # last_node = trajectory.get_last_node()
@@ -635,7 +648,7 @@ class TrajectoryTree:
         parent_traj: Optional[Trajectory] = None
 
         for traj in self.trajectories:
-            if traj.invalid:
+            if traj.to_delete:
                 parent_traj = traj.parent
 
                 if parent_traj:
@@ -643,7 +656,7 @@ class TrajectoryTree:
 
                         parent_traj._inherits_to = {
                             action: child for action, child in parent_traj._inherits_to.items()
-                            if not child.invalid
+                            if not child.to_delete
                         }
 
     def _get_edge_trajectories(self):
@@ -652,7 +665,7 @@ class TrajectoryTree:
         """
         edge_trajectories = []
         for traj in self.trajectories:
-            if traj.invalid:
+            if traj.to_delete:
                 continue
 
             if len(traj.children) < self.regenerate_edge_threshold:
