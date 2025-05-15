@@ -5,6 +5,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .utils import Direction, Action, Point, Tile
+from .utils.geometry import POINT_EQ_LOOKUP
+from .utils.pathfinding import manhattan_distance, find_path, get_directional_neighbors
 from .node import NodeRegistry, DirectionalNode
 
 
@@ -27,8 +29,152 @@ class Trajectory:
         self._inherited_from: Optional['Trajectory'] = None
         self._inherits_to: dict[Action, 'Trajectory'] = {}
 
-    def __hash__(self):
-        return get_trajectory_hash(self.root, *self.route)
+        self._hash: Optional[int] = None
+
+    @classmethod
+    def from_points(cls, points, registry, start_direction=Direction.RIGHT):
+        """
+        Create a trajectory that passes through all given points using the fewest number of actions.
+        Points can be visited in any order to minimize the total number of actions.
+
+        Args:
+            points: List of Point objects to visit in any order
+            registry: NodeRegistry to use for node creation
+            start_direction: Initial direction the agent is facing (default: Direction.RIGHT)
+
+        Returns:
+            Trajectory: A trajectory that visits all points with minimal actions
+        """
+        if not points:
+            raise ValueError("Points list cannot be empty")
+
+        # Remove duplicates while preserving order
+        unique_points = []
+        seen = set()
+        for point in points:
+            point_key = (point.x, point.y)
+            if point_key not in seen:
+                seen.add(point_key)
+                unique_points.append(point)
+
+        # If only one point is provided, create and return a simple trajectory
+        if len(unique_points) == 1:
+            root_node = registry.get_node(unique_points[0], start_direction)
+            return cls(root_node)
+
+        # Use nearest neighbor algorithm with a twist - try each point as a starting point
+        best_trajectory = None
+        min_actions = float('inf')
+
+        for start_idx, start_point in enumerate(unique_points):
+            # Create root node at this starting point
+            root_node = registry.get_node(start_point, start_direction)
+            trajectory = cls(root_node)
+
+            current_pos = start_point
+            current_dir = start_direction
+
+            # Points to visit (excluding the starting point)
+            to_visit = unique_points.copy()
+            to_visit.pop(start_idx)
+
+            # Use nearest neighbor algorithm to visit remaining points
+            while to_visit:
+                # Find the point that requires the fewest actions to reach
+                best_next_idx = -1
+                best_actions = None
+                fewest_actions = float('inf')
+
+                for i, next_point in enumerate(to_visit):
+                    actions = cls._find_shortest_path(current_pos, current_dir, next_point)
+                    if len(actions) < fewest_actions:
+                        fewest_actions = len(actions)
+                        best_next_idx = i
+                        best_actions = actions
+
+                # Move to the best next point
+                for action in best_actions:
+                    trajectory.update(action)
+                    if trajectory.invalid:
+                        break
+
+                if trajectory.invalid:
+                    break
+
+                # Update current position and direction
+                current_node = trajectory.last
+                current_pos = current_node.position
+                current_dir = current_node.direction
+
+                # Remove this point from the to-visit list
+                to_visit.pop(best_next_idx)
+
+            # If this is the best trajectory so far, save it
+            if not trajectory.invalid and len(trajectory.route) < min_actions:
+                min_actions = len(trajectory.route)
+                best_trajectory = trajectory
+
+        # If we couldn't find a valid trajectory, return the first attempt
+        if best_trajectory is None:
+            root_node = registry.get_node(unique_points[0], start_direction)
+            return cls(root_node)
+
+        return best_trajectory
+
+    @staticmethod
+    def _find_shortest_path(start_pos, start_dir, target_pos):
+        """
+        Find the shortest sequence of actions to move from start position and direction to target position.
+
+        Args:
+            start_pos: Starting Point
+            start_dir: Starting Direction
+            target_pos: Target Point to reach
+
+        Returns:
+            list[Action]: Sequence of actions that leads to the target with minimal steps
+        """
+        # If already at the target, return empty list
+        if POINT_EQ_LOOKUP[start_pos.x, target_pos.x, start_pos.y, target_pos.y]:
+            return []
+
+        # Define a state as (position, direction)
+        start_state = (start_pos, start_dir)
+
+        # Define the goal check function
+        def is_goal(state):
+            pos, _ = state
+            return pos.x == target_pos.x and pos.y == target_pos.y
+
+        # Define the neighbor function
+        def get_neighbors(state):
+            return get_directional_neighbors(state)
+
+        # Define the heuristic function
+        def heuristic(state):
+            pos, _ = state
+            return manhattan_distance(pos, target_pos)
+
+        # Define hash function for states
+        def state_hash(state):
+            pos, direction = state
+            return hash((pos.x, pos.y, direction))
+
+        # Find path using A* algorithm
+        result = find_path(
+            start_node=start_state,
+            is_goal=is_goal,
+            get_neighbors=get_neighbors,
+            heuristic=heuristic,
+            node_hash=state_hash
+        )
+
+        return result.actions if result.success else []
+
+    def __hash__(self) -> int:
+        if self._hash is None:
+            self._hash = get_trajectory_hash(self.root, *self.route)
+        return self._hash
 
     def __eq__(self, other):
         if not isinstance(other, Trajectory):
@@ -305,6 +451,7 @@ class TrajectoryTree:
 
         # Spatial index: maps positions to trajectories that pass through them
         self.position_index: dict[Point, set[Trajectory]] = {}
+        self.end_position_index: dict[Point, set[Trajectory]] = {}
 
         # Initialize the starting trajectories
         possible_init_directions: list[Direction] = []
@@ -333,7 +480,7 @@ class TrajectoryTree:
         # Flag to track if we've performed a reset (detected agent) yet
         self.has_reset = False
 
-    def _register_trajectory_in_index(self, trajectory):
+    def _register_trajectory_in_index(self, trajectory: Trajectory):
         """Register a trajectory in the position index."""
         if trajectory.invalid:
             return
@@ -343,7 +490,12 @@ class TrajectoryTree:
                 self.position_index[position] = set()
             self.position_index[position].add(trajectory)
 
-    def _unregister_trajectory_from_index(self, trajectory):
+        end_position = trajectory.last.position
+        if end_position not in self.end_position_index:
+            self.end_position_index[end_position] = set()
+        self.end_position_index[end_position].add(trajectory)
+
+    def _unregister_trajectory_from_index(self, trajectory: Trajectory):
         """Remove a trajectory from the position index."""
         for position in trajectory.position_cache:
             if position in self.position_index and trajectory in self.position_index[position]:
@@ -352,11 +504,19 @@ class TrajectoryTree:
                 if not self.position_index[position]:
                     del self.position_index[position]
 
+        # delete from end_index too
+        end_position = trajectory.last.position
+        if end_position in self.end_position_index:
+            self.end_position_index[end_position].remove(trajectory)
+            if not self.end_position_index[end_position]:
+                del self.end_position_index[end_position]
+
     def _clear_all_trajectories(self):
         """Clear all trajectories and reset the position index."""
         self.trajectories.clear()
         self.edge_trajectories.clear()
         self.position_index.clear()
+        self.end_position_index.clear()
 
     def set_consider_direction(self, consider_direction: bool):
         """
@@ -373,7 +533,7 @@ class TrajectoryTree:
         1. when I encounter the agent, I can destroy all trajectories since the agent's position is known
         2. when I encounter a tile that has not been visited, I remove all trajectories containing that tile (when seeking scout)
         3. when I encounter a tile that has been visited, I remove all trajectories not containing that tile (when seeking scout)
-        4. when I encounter a tile is not visible and has no agent, I remove all trajectories ending with that tile (when seeking scout)
+        4. when I encounter a tile and it has no agent, I remove all trajectories ending with that tile (when seeking scout)
 
         Args:
             information (list[tuple[Point, Tile]]): recently updated/observed tiles
@@ -462,8 +622,8 @@ class TrajectoryTree:
             # Case 3: visited - only keep trajectories containing this position
             if tile.is_empty:
                 positions_must_contain.append(position)
-            # Case 4: not visible and no agent - remove trajectories ending at this position
-            if not tile.is_visible and not (tile.has_guard or tile.has_scout):
+            # Case 4: no agent - remove trajectories ending at this position
+            if not (tile.has_guard or tile.has_scout):
                 positions_no_ending.append(position)
 
         # Use the spatial index for efficient filtering
@@ -482,10 +642,9 @@ class TrajectoryTree:
 
         # Find trajectories ending at positions they shouldn't (Case 4)
         if positions_no_ending:
-            for traj in self.trajectories:
-                last_node = traj.last
-                if last_node.position in positions_no_ending:
-                    trajectories_to_remove.add(traj)
+            for position in positions_no_ending:
+                if position in self.end_position_index:
+                    trajectories_to_remove.update(self.end_position_index[position])
 
         # Find trajectories to keep (has all required positions)
         trajectories_to_keep = None
@@ -537,6 +696,7 @@ class TrajectoryTree:
         Returns:
             list[Trajectory]: Valid trajectories
         """
+        self._destroy_trajectory_families()
         return [traj for traj in self.trajectories if not traj.invalid]
 
     def step(self) -> int:

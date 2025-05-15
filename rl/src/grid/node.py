@@ -1,7 +1,9 @@
 from functools import lru_cache
 import sys
+from typing import Optional
 
 from .utils import Direction, Action, Point, get_hash
+from .utils.geometry import MOVEMENT_VECTORS
 
 
 class NodeRegistry:
@@ -38,6 +40,8 @@ class DirectionalNode:
         self.registry = registry
         self.children: dict[Action, 'DirectionalNode'] = {}
 
+        self._hash: Optional[int] = None
+
     def _get_next_state(self, action: Action):
         """
         Calculate the next position and direction based on an action.
@@ -49,28 +53,6 @@ class DirectionalNode:
             tuple: (next_position, next_direction)
         """
         # Movement vectors for each direction: (dx, dy)
-        movement_vectors = {
-            Direction.RIGHT: (1, 0),
-            Direction.DOWN: (0, 1),
-            Direction.LEFT: (-1, 0),
-            Direction.UP: (0, -1)
-        }
-
-        # Direction changes for turns
-        direction_changes = {
-            Action.LEFT: {  # Left turns
-                Direction.RIGHT: Direction.UP,
-                Direction.DOWN: Direction.RIGHT,
-                Direction.LEFT: Direction.DOWN,
-                Direction.UP: Direction.LEFT
-            },
-            Action.RIGHT: {  # Right turns
-                Direction.RIGHT: Direction.DOWN,
-                Direction.DOWN: Direction.LEFT,
-                Direction.LEFT: Direction.UP,
-                Direction.UP: Direction.RIGHT
-            }
-        }
 
         # Start with current position and direction
         next_position = Point(self.position.x, self.position.y)
@@ -82,22 +64,21 @@ class DirectionalNode:
 
         elif action == Action.FORWARD:
             # Move forward in current direction
-            dx, dy = movement_vectors[self.direction]
+            dx, dy = MOVEMENT_VECTORS[self.direction]
             next_position.x += dx
             next_position.y += dy
 
         elif action == Action.BACKWARD:
             # Move backward (opposite of current direction)
-            dx, dy = movement_vectors[self.direction]
+            dx, dy = MOVEMENT_VECTORS[self.direction]
             next_position.x -= dx
             next_position.y -= dy
 
-        elif action in (Action.LEFT, Action.RIGHT):
-            # Turn without moving
-            next_direction = direction_changes[action][self.direction]
-            # dx, dy = movement_vectors[next_direction]
-            # next_position.x += dx
-            # next_position.y += dy
+        elif action == Action.LEFT:
+            next_direction = self.direction.turn_left()
+
+        elif action == Action.RIGHT:
+            next_direction = self.direction.turn_right()
 
         return next_position, next_direction
 
@@ -135,7 +116,9 @@ class DirectionalNode:
         return self.__str__()
 
     def __hash__(self) -> int:
-        return get_hash(self.position, self.direction)
+        if self._hash is None:
+            self._hash = get_hash(self.position, self.direction)
+        return self._hash
 
     def is_same_state(self, position, direction):
         """Check if this node has the same state (position and direction)"""

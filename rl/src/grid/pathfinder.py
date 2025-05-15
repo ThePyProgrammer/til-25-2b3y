@@ -1,13 +1,12 @@
 from dataclasses import dataclass
 from typing import Optional
-import heapq
 
 import numpy as np
 from numpy.typing import NDArray
 
 from .map import Map
 from .trajectory import TrajectoryTree
-from .utils import Point, Direction, Action
+from .utils import Point, Direction, Action, find_shortest_paths, find_reward_positions, get_node_neighbors
 from .node import DirectionalNode, NodeRegistry
 
 
@@ -129,14 +128,7 @@ class Pathfinder:
 
     def _find_reward_positions(self) -> list[tuple[Point, float]]:
         """Finds all positions with positive rewards in the reward density."""
-        reward_positions = []
-
-        for y in range(self.map.size):
-            for x in range(self.map.size):
-                if self.density[y, x] > 0:
-                    reward_positions.append((Point(x, y), self.density[y, x]))
-
-        return reward_positions
+        return find_reward_positions(self.density, threshold=0.0)
 
     def _get_default_action(self, node: DirectionalNode) -> Action:
         """Returns a default valid action from the given node."""
@@ -157,96 +149,48 @@ class Pathfinder:
         Returns:
             A dictionary mapping reward positions to (node, distance, first_action)
         """
-        # Maps node hash -> (distance, first_action, previous_node_hash)
-        distances: dict[int, tuple[int, Optional[Action], Optional[int]]] = {hash(start_node): (0, None, None)}
-        visited = set()  # Set of visited node hashes
+        # Extract reward positions as DirectionalNode objects
+        goal_points = [pos for pos, _ in reward_positions]
 
-        # Priority queue stores (distance, node_hash)
-        pq = [(0, hash(start_node))]
+        # Create goal nodes (one for each direction at each reward position)
+        goal_nodes = []
+        for point in goal_points:
+            for direction in Direction:
+                if (node := self.registry.get_or_create_node(point, direction)) is not None:
+                    goal_nodes.append(node)
 
-        # Maps reward position -> (closest node, distance, first_action)
+        # Find shortest paths to all goals
+        path_results = find_shortest_paths(
+            start_node=start_node,
+            goal_nodes=goal_nodes,
+            get_neighbors=get_node_neighbors,
+            node_hash=hash
+        )
+
+        # Convert to expected format: Point -> (node, distance, first_action)
         best_paths_to_rewards = {}
 
-        while pq:
-            current_dist, current_hash = heapq.heappop(pq)
-
-            # Skip if already processed this node with a shorter path
-            if current_hash in visited:
+        for node, result in path_results.items():
+            # Skip if no path found or no first action
+            if not result.success or result.first_action is None:
                 continue
 
-            # Mark as visited
-            visited.add(current_hash)
-            current_node = self.registry.nodes[current_hash]
+            # Get the point for this node
+            point = node.position
 
-            # Check if this node is at a reward position
-            self._update_paths_if_at_reward(
-                current_node, current_hash, current_dist,
-                reward_positions, distances, best_paths_to_rewards
-            )
+            # Check if we already have a better path to this point
+            if (
+                point in best_paths_to_rewards
+                and best_paths_to_rewards[point][1] <= result.cost
+            ):
+                continue
 
-            # If we've found paths to all rewards, we can stop
-            if len(best_paths_to_rewards) == len(reward_positions):
-                break
-
-            # Process neighbors
-            self._process_neighbors(
-                current_node, current_hash, current_dist,
-                start_node, distances, visited, pq
-            )
+            # Add or update the path
+            best_paths_to_rewards[point] = (node, int(result.cost), result.first_action)
 
         return best_paths_to_rewards
 
-    def _update_paths_if_at_reward(
-        self,
-        current_node: DirectionalNode,
-        current_hash: int,
-        current_dist: int,
-        reward_positions: list[tuple[Point, float]],
-        distances: dict[int, tuple[int, Optional[Action], Optional[int]]],
-        best_paths_to_rewards: dict[Point, tuple[DirectionalNode, int, Action]]
-    ) -> None:
-        """Updates best_paths_to_rewards if the current node is at a reward position."""
-        for reward_pos, reward_value in reward_positions:
-            if current_node.position == reward_pos:
-                # Get the first action that led to this path
-                _, first_action, _ = distances[current_hash]
-                if first_action is None:
-                    continue
-
-                # Update best path to this reward if better
-                if reward_pos not in best_paths_to_rewards or current_dist < best_paths_to_rewards[reward_pos][1]:
-                    best_paths_to_rewards[reward_pos] = (current_node, current_dist, first_action)
-
-    def _process_neighbors(
-        self,
-        current_node: DirectionalNode,
-        current_hash: int,
-        current_dist: int,
-        start_node: DirectionalNode,
-        distances: dict[int, tuple[int, Optional[Action], Optional[int]]],
-        visited: set[int],
-        pq: list[tuple[int, int]]
-    ) -> None:
-        """Processes all neighbors of the current node in Dijkstra's algorithm."""
-        for action, next_node in current_node.children.items():
-            next_hash = hash(next_node)
-
-            if next_hash in visited:
-                continue
-
-            # Calculate new distance
-            new_dist = current_dist + 1
-
-            # If this is a shorter path or a new node
-            if next_hash not in distances or new_dist < distances[next_hash][0]:
-                # Determine first action in the path
-                first_action = action if current_hash == hash(start_node) else distances[current_hash][1]
-
-                # Update distance and path information
-                distances[next_hash] = (new_dist, first_action, current_hash)
-
-                # Add to priority queue
-                heapq.heappush(pq, (new_dist, next_hash))
+    # These methods have been replaced by using find_shortest_paths utility function
 
     def _select_best_action(
         self,

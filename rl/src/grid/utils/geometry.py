@@ -1,7 +1,9 @@
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Optional
 
 import numpy as np
+from numpy.typing import NDArray
 
 from .enums import Direction
 
@@ -10,39 +12,41 @@ from .enums import Direction
 def get_position_hash(x, y):
     return hash((x, y))
 
-POINT_EQ_LOOKUP = np.zeros((16, 16, 16, 16), dtype=bool)
+POINT_EQ_LOOKUP: NDArray  = np.zeros((16, 16, 16, 16), dtype=bool)
 for i in range(16):
     for j in range(16):
         POINT_EQ_LOOKUP[i, i, j, j] = True
 
-# @lru_cache(maxsize=256)
-# def get_eq(a, b):
-#     # Use the lookup table for equality check
-#     if 0 <= a < 16 and 0 <= b < 16:
-#         return _EQ_LOOKUP[a, b, a, b]
-#     else:
-#         # Fall back to regular comparison for values outside our table
-#         return a == b
-
 @dataclass
 class Point:
-    x: int
-    y: int
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+        self._hash: Optional[int] = None
 
     def __eq__(self, other):
         if not isinstance(other, Point):
             return False
-        # return get_eq(self.x, other.x) and get_eq(self.y, other.y)
-        return POINT_EQ_LOOKUP[self.x, other.x, self.y, other.y]
+        return POINT_EQ_LOOKUP[self.x, other.x, self.y, other.y].item()
 
-    def __hash__(self):
-        return get_position_hash(self.x, self.y)
+    def __hash__(self) -> int:
+        if self._hash is None:
+            self._hash = get_position_hash(self.x, self.y)
+        return self._hash
 
     def __str__(self):
         return f"({self.x}, {self.y})"
 
     def __repr__(self):
         return self.__str__()
+
+MOVEMENT_VECTORS = {
+    Direction.RIGHT: (1, 0),
+    Direction.DOWN: (0, 1),
+    Direction.LEFT: (-1, 0),
+    Direction.UP: (0, -1)
+}
 
 @lru_cache(maxsize=1024)
 def get_hash(init_position: Point, direction: Direction) -> int:

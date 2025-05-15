@@ -18,6 +18,17 @@ from .geometry import (
     view_to_world
 )
 
+from .pathfinding import (
+    PathNode,
+    PathResult,
+    find_path,
+    find_shortest_paths, 
+    manhattan_distance,
+    find_reward_positions,
+    get_directional_neighbors,
+    get_node_neighbors
+)
+
 # Make everything available at the top level
 __all__ = [
     # Enums
@@ -35,4 +46,14 @@ __all__ = [
     'Point',
     'get_hash',
     'view_to_world',
+    
+    # Pathfinding
+    'PathNode',
+    'PathResult',
+    'find_path',
+    'find_shortest_paths',
+    'manhattan_distance',
+    'find_reward_positions',
+    'get_directional_neighbors',
+    'get_node_neighbors',
 ]
