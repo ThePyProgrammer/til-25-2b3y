@@ -1,5 +1,6 @@
+from dataclasses import dataclass
 from functools import lru_cache
-from typing import Optional
+from typing import Optional, Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -16,9 +17,9 @@ def get_trajectory_hash(root, *route):
 
 class Trajectory:
     def __init__(self, root_node):
-        self.root: DirectionalNode = root_node
+        self.head: DirectionalNode = root_node
         self.route: list[Action] = []
-        self.nodes: list[DirectionalNode] = [self.root]
+        self.nodes: list[DirectionalNode] = [self.head]
         self.position_cache: set[Point] = {root_node.position}  # Cache positions for faster lookups
 
         self.invalid: bool = False
@@ -83,11 +84,11 @@ class Trajectory:
             while to_visit:
                 # Find the point that requires the fewest actions to reach
                 best_next_idx = -1
-                best_actions = None
+                best_actions: list[Action] = []
                 fewest_actions = float('inf')
 
                 for i, next_point in enumerate(to_visit):
-                    actions = cls._find_shortest_path(current_pos, current_dir, next_point)
+                    actions: list[Action] = cls._find_shortest_path(current_pos, current_dir, next_point)
                     if len(actions) < fewest_actions:
                         fewest_actions = len(actions)
                         best_next_idx = i
@@ -103,7 +104,7 @@ class Trajectory:
                     break
 
                 # Update current position and direction
-                current_node = trajectory.last
+                current_node = trajectory.tail
                 current_pos = current_node.position
                 current_dir = current_node.direction
 
@@ -174,7 +175,7 @@ class Trajectory:
 
     def __hash__(self) -> int:
         if self._hash is None:
-            self._hash = get_trajectory_hash(self.root, *self.route)
+            self._hash = get_trajectory_hash(self.head, *self.route)
         return self._hash
 
     def __eq__(self, other):
@@ -206,7 +207,7 @@ class Trajectory:
 
     def copy(self):
         """Create a deep copy of this trajectory with the same root but new lists."""
-        new_trajectory = Trajectory(self.root)
+        new_trajectory = Trajectory(self.head)
         new_trajectory.route = self.route[:]
         new_trajectory.nodes = self.nodes[:]
         new_trajectory.position_cache = self.position_cache.copy()
@@ -274,11 +275,11 @@ class Trajectory:
 
         populate_nodes = (len(self.nodes) - 1) != len(self.route)
         if populate_nodes:
-            self.nodes = [self.root]
+            self.nodes = [self.head]
             # Reset position cache when repopulating nodes
-            self.position_cache = {self.root.position}
+            self.position_cache = {self.head.position}
 
-        current_node = self.root
+        current_node = self.head
         for i, action in enumerate(self.route):
             if action in current_node.children:
                 current_node = current_node.children[action]
@@ -294,7 +295,7 @@ class Trajectory:
         return current_node
 
     @property
-    def last(self) -> DirectionalNode:
+    def tail(self) -> DirectionalNode:
         return self.nodes[-1]
 
     def get_new_trajectories(self, max_backtrack: int = 3):
@@ -311,7 +312,7 @@ class Trajectory:
             return []
 
         # last_node = self.get_last_node()
-        last_node = self.last
+        last_node = self.tail
         if not last_node:
             return []
 
@@ -353,7 +354,7 @@ class Trajectory:
         if self.invalid:
             return None
 
-        last_node = self.last
+        last_node = self.tail
         # last_node = self.get_last_node()
         if not last_node:
             return None
@@ -368,9 +369,9 @@ class Trajectory:
         if self.invalid:
             return f"Invalid Trajectory: {self.route}"
 
-        last_node = self.last
+        last_node = self.tail
         if last_node:
-            return f"Trajectory to {last_node.position} {last_node.direction} from {self.root.position} {self.root.direction} via {self.route}"
+            return f"Trajectory to {last_node.position} {last_node.direction} from {self.head.position} {self.head.direction} via {self.route}"
         return f"Incomplete Trajectory: {self.route}"
 
     def __repr__(self):
@@ -416,6 +417,52 @@ class Trajectory:
     def to_delete(self):
         return self.invalid or self.pruned
 
+@dataclass
+class Constraints:
+    """
+    Point constraints
+    """
+    contains: list[Point]
+    excludes: list[Point]
+
+    def __bool__(self):
+        return len(self.contains) > 0 or len(self.excludes) > 0
+
+@dataclass
+class TrajectoryConstraints:
+    route: Constraints
+    tail: Constraints
+
+    def __bool__(self):
+        return bool(self.route) or bool(self.tail)
+
+class TrajectoryIndex:
+    def __init__(self):
+        self._index: dict[Any, set[Trajectory]] = {}
+
+    def add(self, key: Any, trajectory: Trajectory) -> None:
+        if key not in self._index:
+            self._index[key] = set()
+        self._index[key].add(trajectory)
+
+    def remove(self, key: Any, trajectory: Trajectory) -> None:
+        if key in self._index and trajectory in self._index[key]:
+            trajectory.prune()
+            self._index[key].remove(trajectory)
+            # Clean up empty sets
+            if not self._index[key]:
+                del self._index[key]
+
+    def clear(self):
+        self._index.clear()
+
+    def __contains__(self, key: Any):
+        return key in self._index
+
+    def __getitem__(self, key: Any):
+        if key not in self._index:
+            self._index[key] = set()
+        return self._index[key]
 
 class TrajectoryTree:
     def __init__(
@@ -450,8 +497,9 @@ class TrajectoryTree:
         self.registry = registry if registry is not None else NodeRegistry(size)
 
         # Spatial index: maps positions to trajectories that pass through them
-        self.position_index: dict[Point, set[Trajectory]] = {}
-        self.end_position_index: dict[Point, set[Trajectory]] = {}
+        self.position_index = TrajectoryIndex()
+        self.tail_position_index = TrajectoryIndex()
+        self.node_index = TrajectoryIndex()
 
         # Initialize the starting trajectories
         possible_init_directions: list[Direction] = []
@@ -480,41 +528,30 @@ class TrajectoryTree:
 
     def _register_trajectory_in_index(self, trajectory: Trajectory):
         """Register a trajectory in the position index."""
-        if trajectory.invalid:
+        if trajectory.to_delete:
             return
 
-        for position in trajectory.position_cache:
-            if position not in self.position_index:
-                self.position_index[position] = set()
-            self.position_index[position].add(trajectory)
+        for node in trajectory.nodes:
+            self.position_index.add(node.position, trajectory)
+            self.node_index.add(node, trajectory)
 
-        end_position = trajectory.last.position
-        if end_position not in self.end_position_index:
-            self.end_position_index[end_position] = set()
-        self.end_position_index[end_position].add(trajectory)
+        self.tail_position_index.add(trajectory.tail.position, trajectory)
 
     def _unregister_trajectory_from_index(self, trajectory: Trajectory):
         """Remove a trajectory from the position index."""
-        for position in trajectory.position_cache:
-            if position in self.position_index and trajectory in self.position_index[position]:
-                self.position_index[position].remove(trajectory)
-                # Clean up empty sets
-                if not self.position_index[position]:
-                    del self.position_index[position]
+        for node in trajectory.nodes:
+            self.position_index.remove(node.position, trajectory)
+            self.node_index.add(node, trajectory)
 
         # delete from end_index too
-        end_position = trajectory.last.position
-        if end_position in self.end_position_index:
-            self.end_position_index[end_position].remove(trajectory)
-            if not self.end_position_index[end_position]:
-                del self.end_position_index[end_position]
+        self.tail_position_index.remove(trajectory.tail.position, trajectory)
 
     def _clear_all_trajectories(self):
         """Clear all trajectories and reset the position index."""
         self.trajectories.clear()
         self.edge_trajectories.clear()
         self.position_index.clear()
-        self.end_position_index.clear()
+        self.tail_position_index.clear()
 
     def set_consider_direction(self, consider_direction: bool):
         """
@@ -537,19 +574,19 @@ class TrajectoryTree:
             information (list[tuple[Point, Tile]]): recently updated/observed tiles
             seeking_scout (bool): If True, look for scout agent. If False, look for guard agent.
         """
-        # Process agent sightings first (early exit)
-        agent_position = self._check_for_agent(information, seeking_scout)
-        if agent_position is not None:
-            self._reset_trajectories_for_agent(agent_position)
-            self.trajectories = self._get_valid_trajectories()
-            return
-
         # Track newly discovered ambiguous tiles
         self._track_ambiguous_tiles(information)
 
         if seeking_scout:
             self._prune_by_tile_content(information)
-            self.trajectories = self._get_valid_trajectories()
+
+        self._clean_up_trajectories()
+
+        # Process agent sightings first (early exit)
+        # agent_position = self._check_for_agent(information, seeking_scout)
+        # if agent_position is not None:
+        #     self._reset_trajectories_for_agent(agent_position)
+        #     return
 
     def _check_for_agent(self, information, seeking_scout):
         """Check if an agent is present in the information."""
@@ -559,7 +596,10 @@ class TrajectoryTree:
         return None
 
     def _reset_trajectories_for_agent(self, agent_position):
-        """Reset all trajectories to start from the agent position."""
+        """
+        Create trajectories that end with the agent's position.
+        ._prune_by_tile_content() will have kept only trajectories ending in the agent's location, but that is not enough.
+        """
         # If this is not the first reset, mark all currently known empty tiles as ambiguous
         if self.has_reset:
             # Add all currently tracked empty/visited tiles to ambiguous_tiles
@@ -573,17 +613,17 @@ class TrajectoryTree:
             self.has_reset = True
 
         # Clear existing trajectories and their index
-        self._clear_all_trajectories()
+        # self._clear_all_trajectories()
 
         # Create new trajectories at the agent's position, considering all possible directions
-        for direction in Direction:
-            root_node = self.registry.get_or_create_node(agent_position, direction)
-            trajectory = Trajectory(root_node)
-            self.trajectories.append(trajectory)
-            self._register_trajectory_in_index(trajectory)
+        # for direction in Direction:
+        #     root_node = self.registry.get_or_create_node(agent_position, direction)
+        #     trajectory = Trajectory(root_node)
+        #     self.trajectories.append(trajectory)
+        #     self._register_trajectory_in_index(trajectory)
 
         # Update edge trajectories
-        self.edge_trajectories = self.trajectories.copy()
+        # self.edge_trajectories = self.trajectories.copy()
 
     def _track_ambiguous_tiles(self, information):
         """Track newly discovered empty tiles as ambiguous if we've already had a reset."""
@@ -602,65 +642,83 @@ class TrajectoryTree:
             print(f"Ambiguous tile positions: {sorted(self.ambiguous_tiles)}")
         print(f"Number of trajectories: {len(self.trajectories)}")
 
-    def _prune_by_tile_content(self, information):
+    def _prune_by_tile_content(self, information: list[tuple[Point, Tile]]):
         """Prune trajectories based on tile content."""
         # Group positions by condition to avoid redundant iterations
-        positions_to_exclude = []  # Positions trajectories should NOT contain
-        positions_must_contain = []  # Positions trajectories MUST contain
-        positions_no_ending = []    # Positions trajectories should NOT end at (Case 4)
+        route_constraints = Constraints([], [])
+        tail_constraints = Constraints([], [])
+
+        all_constraints = TrajectoryConstraints(
+            route_constraints,
+            tail_constraints
+        )
 
         for position, tile in information:
             # Skip any tiles that are in our ambiguous set
             if position in self.ambiguous_tiles:
                 continue
 
+            # Case 1: agent detected - only keep trajectories containing this position
+            if tile.has_scout:
+                all_constraints.tail.contains.append(position)
             # Case 2: not visited - remove trajectories containing this position
             if tile.is_visible and (tile.is_recon or tile.is_mission):
-                positions_to_exclude.append(position)
+                all_constraints.route.excludes.append(position)
             # Case 3: visited - only keep trajectories containing this position
             if tile.is_empty:
-                positions_must_contain.append(position)
+                all_constraints.route.contains.append(position)
             # Case 4: no agent - remove trajectories ending at this position
-            if not (tile.has_guard or tile.has_scout):
-                positions_no_ending.append(position)
+            if not tile.has_scout:
+                all_constraints.tail.excludes.append(position)
 
         # Use the spatial index for efficient filtering
-        if not positions_to_exclude and not positions_must_contain and not positions_no_ending:
+        if not all_constraints:
             return  # No filtering needed
 
-        self._apply_filtering(positions_to_exclude, positions_must_contain, positions_no_ending)
+        self._apply_filtering(all_constraints)
 
-    def _apply_filtering(self, positions_to_exclude, positions_must_contain, positions_no_ending):
+    def _apply_filtering(self, constraints: TrajectoryConstraints):
         """Apply filtering based on position constraints."""
+
+        if Point(0, 0) in constraints.route.excludes:
+            constraints.route.excludes.remove(Point(0, 0))
+
+        if Point(0, 0) in constraints.tail.excludes:
+            constraints.tail.excludes.remove(Point(0, 0))
+
+
         # Find trajectories to exclude (has any excluded position)
         trajectories_to_remove = set()
-        for position in positions_to_exclude:
+        for position in constraints.route.excludes:
             if position in self.position_index:
                 trajectories_to_remove.update(self.position_index[position])
 
-        # Find trajectories ending at positions they shouldn't (Case 4)
-        if positions_no_ending:
-            for position in positions_no_ending:
-                if position in self.end_position_index:
-                    trajectories_to_remove.update(self.end_position_index[position])
+        for position in constraints.tail.excludes:
+            if position in self.tail_position_index:
+                trajectories_to_remove.update(self.tail_position_index[position])
 
         # Find trajectories to keep (has all required positions)
-        trajectories_to_keep = None
-        for position in positions_must_contain:
+        trajectories_to_keep = set(self.trajectories)
+
+        # Filter by required route positions
+        for position in constraints.route.contains:
             if position in self.position_index:
-                position_trajs = self.position_index[position]
-                if trajectories_to_keep is None:
-                    trajectories_to_keep = position_trajs.copy()
-                else:
-                    trajectories_to_keep.intersection_update(position_trajs)
+                trajectories_with_position = self.position_index[position]
+                trajectories_to_keep &= trajectories_with_position
             else:
-                # If any required position has no trajectories, none can be kept
+                # If a required position doesn't exist in any trajectory, no trajectories can satisfy
                 trajectories_to_keep = set()
                 break
 
-        # Default to all trajectories if no must-contain positions
-        if not positions_must_contain:
-            trajectories_to_keep = set(self.trajectories)
+        # Filter by required tail positions
+        for position in constraints.tail.contains:
+            if position in self.tail_position_index:
+                trajectories_with_tail_position = self.tail_position_index[position]
+                trajectories_to_keep &= trajectories_with_tail_position
+            else:
+                # If a required tail position doesn't exist in any trajectory, no trajectories can satisfy
+                trajectories_to_keep = set()
+                break
 
         # Compute final valid trajectories
         valid_trajectories = [
@@ -670,8 +728,8 @@ class TrajectoryTree:
         # Remove invalid trajectories from the index
         removed_trajectories = set(self.trajectories) - set(valid_trajectories)
         for traj in removed_trajectories:
-            traj.invalidate()
-            self._unregister_trajectory_from_index(traj)
+            traj.prune()
+            # self._unregister_trajectory_from_index(traj)
 
         self._destroy_trajectory_families()
         self.trajectories = valid_trajectories
@@ -686,16 +744,6 @@ class TrajectoryTree:
 
         if has_deleted_edge:
             self.edge_trajectories = self._get_edge_trajectories()
-
-    def _get_valid_trajectories(self):
-        """
-        Returns a list of all valid trajectories (not marked as invalid).
-
-        Returns:
-            list[Trajectory]: Valid trajectories
-        """
-        self._destroy_trajectory_families()
-        return [traj for traj in self.trajectories if not traj.invalid]
 
     def step(self) -> int:
         """
@@ -768,6 +816,7 @@ class TrajectoryTree:
                 self.discard_edge_trajectories.append((self.num_step, traj))
 
         print(f"Total discard: {len(self.discard_edge_trajectories)}")
+        print(f"Valid discarded: {len([0 for traj in self.discard_edge_trajectories if not traj[-1].to_delete])}")
 
         # Expand selected trajectories
         for trajectory in selected_trajectories:
@@ -807,7 +856,7 @@ class TrajectoryTree:
                 continue
 
             # last_node = trajectory.get_last_node()
-            last_node = trajectory.last
+            last_node = trajectory.tail
             if not last_node:
                 continue
 
@@ -897,3 +946,17 @@ class TrajectoryTree:
                 edge_trajectories.append(traj)
 
         return edge_trajectories
+
+    def _clean_up_trajectories(self):
+        valid_trajectories = []
+        for traj in self.trajectories:
+            if traj.to_delete:
+                self._unregister_trajectory_from_index(traj)
+            else:
+                valid_trajectories.append(traj)
+        self.trajectories = valid_trajectories
+
+    def check_wall_trajectories(self, node: DirectionalNode):
+        trajectories = self.node_index[node]
+        for traj in trajectories:
+            traj.get_last_node()

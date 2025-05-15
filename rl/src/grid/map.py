@@ -292,6 +292,9 @@ class Map:
                 if action in node.children:
                     del node.children[action]
 
+        for tree in self.trees:
+            tree.check_wall_trajectories(position)
+
         # Define wall relationships (opposites and position offsets)
         wall_relationships = {
             'right': ('left', Point(1, 0)),   # If right wall here, there's a left wall at x+1,y
