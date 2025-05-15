@@ -10,7 +10,7 @@ from .utils.pathfinding import manhattan_distance, find_path, get_directional_ne
 from .node import NodeRegistry, DirectionalNode
 
 
-@lru_cache(maxsize=2**16)
+# @lru_cache(maxsize=2**16)
 def get_trajectory_hash(root, *route):
     return hash((root, *route))
 
@@ -25,6 +25,7 @@ class Trajectory:
         self.invalid_action_idx: Optional[int] = None
 
         self.pruned: bool = False
+        self.discarded: bool = False # if it's valid and was not (yet) pruned, but discarded by  TrajectoryTree.step()
 
         self._inherited_from: Optional['Trajectory'] = None
         self._inherits_to: dict[Action, 'Trajectory'] = {}
@@ -179,8 +180,7 @@ class Trajectory:
     def __eq__(self, other):
         if not isinstance(other, Trajectory):
             return False
-        return (self.root == other.root and
-                self.route == other.route)
+        return self.__hash__() == hash(other)
 
     @lru_cache(maxsize=1024+256)
     def __contains__(self, item: DirectionalNode | Point) -> bool:
@@ -470,9 +470,7 @@ class TrajectoryTree:
             self._register_trajectory_in_index(trajectory)
 
         self.edge_trajectories: list[Trajectory] = self.trajectories.copy()
-
-        # Add expansion cache for memoization
-        self.expansion_cache: dict[DirectionalNode, dict[Action, DirectionalNode]] = {}
+        self.discard_edge_trajectories: list[tuple[int, Trajectory]] = [] # [(step it was discarded, edge_trajectory), ...]
 
         # Add a set to track ambiguous tiles (visited tiles we should ignore for pruning)
         self.ambiguous_tiles = set()
@@ -736,6 +734,8 @@ class TrajectoryTree:
             if traj.to_delete:
                 continue
 
+            traj.discarded = True
+
             # Get key for this trajectory's endpoint
             key = traj.get_endpoint_key(self.consider_direction)
             if not key:
@@ -753,12 +753,21 @@ class TrajectoryTree:
 
             # Always select the shortest trajectory
             shortest = trajectories[0]
+            shortest.discarded = False
             selected_trajectories.append(shortest)
 
             # Also select the longest if different
             if len(trajectories) > 1 and len(trajectories[-1].route) > len(shortest.route):
                 longest = trajectories[-1]
+                longest.discarded = False
                 selected_trajectories.append(longest)
+
+        # Add discarded trajectories to discard_edge_trajectories
+        for traj in old_edge_trajectories:
+            if traj.discarded:
+                self.discard_edge_trajectories.append((self.num_step, traj))
+
+        print(f"Total discard: {len(self.discard_edge_trajectories)}")
 
         # Expand selected trajectories
         for trajectory in selected_trajectories:
