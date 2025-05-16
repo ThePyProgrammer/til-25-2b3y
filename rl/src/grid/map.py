@@ -14,7 +14,6 @@ from .utils import (
 )
 from .node import NodeRegistry, DirectionalNode
 from .trajectory import TrajectoryTree
-from .parallel_trajectory import ParallelTrajectoryTree
 
 
 class Map:
@@ -291,10 +290,11 @@ class Map:
             # Remove invalid actions from node children
             for action in invalid_actions:
                 if action in node.children:
+                    invalid_child = node.children[action]
                     del node.children[action]
 
-            for tree in self.trees:
-                tree.check_wall_trajectories(node)
+                    for tree in self.trees:
+                        tree.check_wall_trajectories(invalid_child)
 
         # Define wall relationships (opposites and position offsets)
         wall_relationships = {
@@ -341,8 +341,7 @@ class Map:
             position = Point(position[0], position[1])
 
         # Create a trajectory tree with the current map's registry
-        tree_cls = ParallelTrajectoryTree if parallel else TrajectoryTree
-        tree = tree_cls(position, direction, self.size, registry=self.registry)
+        tree = TrajectoryTree(position, direction, self.size, registry=self.registry)
 
         self.trees.append(tree)
 

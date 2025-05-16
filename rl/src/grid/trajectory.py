@@ -16,7 +16,7 @@ def get_trajectory_hash(root, *route):
     return hash((root, *route))
 
 class Trajectory:
-    def __init__(self, root_node):
+    def __init__(self, root_node: DirectionalNode, step: int):
         self.head: DirectionalNode = root_node
         self.route: list[Action] = []
         self.nodes: list[DirectionalNode] = [self.head]
@@ -28,13 +28,15 @@ class Trajectory:
         self.pruned: bool = False
         self.discarded: bool = False # if it's valid and was not (yet) pruned, but discarded by  TrajectoryTree.step()
 
+        self.created_at: int = step
+
         self._inherited_from: Optional['Trajectory'] = None
         self._inherits_to: dict[Action, 'Trajectory'] = {}
 
         self._hash: Optional[int] = None
 
     @classmethod
-    def from_points(cls, points, registry, start_direction=Direction.RIGHT):
+    def from_points(cls, points, registry, step=-1, start_direction=Direction.RIGHT):
         """
         Create a trajectory that passes through all given points using the fewest number of actions.
         Points can be visited in any order to minimize the total number of actions.
@@ -62,7 +64,7 @@ class Trajectory:
         # If only one point is provided, create and return a simple trajectory
         if len(unique_points) == 1:
             root_node = registry.get_node(unique_points[0], start_direction)
-            return cls(root_node)
+            return cls(root_node, step)
 
         # Use nearest neighbor algorithm with a twist - try each point as a starting point
         best_trajectory = None
@@ -71,7 +73,7 @@ class Trajectory:
         for start_idx, start_point in enumerate(unique_points):
             # Create root node at this starting point
             root_node = registry.get_node(start_point, start_direction)
-            trajectory = cls(root_node)
+            trajectory = cls(root_node, step)
 
             current_pos = start_point
             current_dir = start_direction
@@ -96,7 +98,7 @@ class Trajectory:
 
                 # Move to the best next point
                 for action in best_actions:
-                    trajectory.update(action)
+                    trajectory.update(action, step)
                     if trajectory.invalid:
                         break
 
@@ -119,7 +121,7 @@ class Trajectory:
         # If we couldn't find a valid trajectory, return the first attempt
         if best_trajectory is None:
             root_node = registry.get_node(unique_points[0], start_direction)
-            return cls(root_node)
+            return cls(root_node, step)
 
         return best_trajectory
 
@@ -207,7 +209,7 @@ class Trajectory:
 
     def copy(self):
         """Create a deep copy of this trajectory with the same root but new lists."""
-        new_trajectory = Trajectory(self.head)
+        new_trajectory = Trajectory(self.head, self.created_at)
         new_trajectory.route = self.route[:]
         new_trajectory.nodes = self.nodes[:]
         new_trajectory.position_cache = self.position_cache.copy()
@@ -215,12 +217,13 @@ class Trajectory:
         new_trajectory._inherited_from = self
         return new_trajectory
 
-    def update(self, action):
+    def update(self, action: Action, step: int):
         """
         Add an action to the route and validate it.
         If the action is invalid, mark this trajectory as invalid.
         """
         self.route.append(action)
+        self.step = step
 
         # Check if this action is valid
         self.get_last_node()
@@ -298,7 +301,7 @@ class Trajectory:
     def tail(self) -> DirectionalNode:
         return self.nodes[-1]
 
-    def get_new_trajectories(self, max_backtrack: int = 3):
+    def get_new_trajectories(self, step: int, max_backtrack: int = 3):
         """
         Get new trajectories by exploring all valid actions from the current endpoint.
 
@@ -326,7 +329,7 @@ class Trajectory:
             if action not in self._inherits_to:
                 # Create a new trajectory with this action
                 new_trajectory = self.copy()
-                new_trajectory.update(action)
+                new_trajectory.update(action, step)
 
                 # Skip if this made the trajectory invalid
                 if new_trajectory.invalid:
@@ -529,12 +532,14 @@ class TrajectoryTree:
         for direction in possible_init_directions:
             # This will either create a new node or use an existing one
             root_node = self.registry.get_or_create_node(init_position, direction)
-            trajectory = Trajectory(root_node)
+            trajectory = Trajectory(root_node, self.num_step)
             self.trajectories.append(trajectory)
             self._register_trajectory_in_index(trajectory)
 
         self.edge_trajectories: list[Trajectory] = self.trajectories.copy()
-        self.discard_edge_trajectories: list[tuple[int, Trajectory]] = [] # [(step it was discarded, edge_trajectory), ...]
+        self.discard_edge_trajectories: list[Trajectory] = [] # [(step it was discarded, edge_trajectory), ...]
+
+        self.temporal_constraints: list[TrajectoryConstraints] = []
 
         # Add a set to track ambiguous tiles (visited tiles we should ignore for pruning)
         self.ambiguous_tiles = set()
@@ -664,7 +669,7 @@ class TrajectoryTree:
         route_constraints = Constraints([], [])
         tail_constraints = Constraints([], [])
 
-        all_constraints = TrajectoryConstraints(
+        constraints = TrajectoryConstraints(
             route_constraints,
             tail_constraints
         )
@@ -676,32 +681,34 @@ class TrajectoryTree:
 
             # Case 1: agent detected - only keep trajectories containing this position
             if tile.has_scout:
-                all_constraints.tail.contains.append(position)
+                constraints.tail.contains.append(position)
             # Case 2: not visited - remove trajectories containing this position
             if tile.is_visible and (tile.is_recon or tile.is_mission):
-                all_constraints.route.excludes.append(position)
+                constraints.route.excludes.append(position)
             # Case 3: visited - only keep trajectories containing this position
             if tile.is_empty:
-                all_constraints.route.contains.append(position)
+                constraints.route.contains.append(position)
             # Case 4: no agent - remove trajectories ending at this position
             if not tile.has_scout:
-                all_constraints.tail.excludes.append(position)
+                constraints.tail.excludes.append(position)
 
         # Use the spatial index for efficient filtering
-        if not all_constraints:
+        if not constraints:
             return  # No filtering needed
 
-        self._apply_filtering(all_constraints)
 
-    def _apply_filtering(self, constraints: TrajectoryConstraints):
-        """Apply filtering based on position constraints."""
-
+        # bugged? scout doesn't collect point at spawn location
         if Point(0, 0) in constraints.route.excludes:
             constraints.route.excludes.remove(Point(0, 0))
 
         if Point(0, 0) in constraints.tail.excludes:
             constraints.tail.excludes.remove(Point(0, 0))
 
+        self._apply_filtering(constraints)
+        self.temporal_constraints.append(constraints)
+
+    def _apply_filtering(self, constraints: TrajectoryConstraints):
+        """Apply filtering based on position constraints."""
 
         # Find trajectories to exclude (has any excluded position)
         trajectories_to_remove = set()
@@ -780,6 +787,8 @@ class TrajectoryTree:
         Returns:
             Number of new trajectories added
         """
+        self.num_step += 1
+
         if not self.trajectories:
             return 0
 
@@ -829,22 +838,20 @@ class TrajectoryTree:
         # Add discarded trajectories to discard_edge_trajectories
         for traj in old_edge_trajectories:
             if traj.discarded:
-                self.discard_edge_trajectories.append((self.num_step, traj))
+                self.discard_edge_trajectories.append(traj)
 
         print(f"Total discard: {len(self.discard_edge_trajectories)}")
-        print(f"Valid discarded: {len([0 for traj in self.discard_edge_trajectories if not traj[-1].to_delete])}")
+        # print(f"Valid discarded: {len([0 for traj in self.discard_edge_trajectories if not traj.to_delete])}")
 
         # Expand selected trajectories
         for trajectory in selected_trajectories:
-            new_trajectories = trajectory.get_new_trajectories(max_backtrack=self.max_backtrack)
+            new_trajectories = trajectory.get_new_trajectories(self.num_step, max_backtrack=self.max_backtrack)
             if new_trajectories:
                 # Add valid new trajectories
                 for new_traj in new_trajectories:
                     self.trajectories.append(new_traj)
                     self._register_trajectory_in_index(new_traj)
                     self.edge_trajectories.append(new_traj)
-
-        self.num_step += 1
 
         # Return count of new trajectories
         return len(self.trajectories) - before_len
@@ -971,8 +978,13 @@ class TrajectoryTree:
             else:
                 valid_trajectories.append(traj)
         self.trajectories = valid_trajectories
+        self.discard_edge_trajectories = [traj for traj in self.discard_edge_trajectories if not traj.to_delete]
 
-    def check_wall_trajectories(self, node: DirectionalNode):
-        trajectories = self.node_index[node]
+    def check_wall_trajectories(self, key: Point | DirectionalNode):
+        if isinstance(key, DirectionalNode):
+            trajectories = self.node_index[key]
+        elif isinstance(key, Point):
+            trajectories = self.position_index[key]
+
         for traj in trajectories:
             traj.get_last_node()
