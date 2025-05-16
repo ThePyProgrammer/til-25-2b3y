@@ -47,8 +47,8 @@ class TrajectoryTree:
         self.node_index = TrajectoryIndex()
 
         # Initialize the starting trajectories
+        self.roots: list[DirectionalNode] = []
         possible_init_directions: list[Direction] = []
-
         if init_direction is not None:
             possible_init_directions.append(init_direction)
         else:
@@ -57,8 +57,9 @@ class TrajectoryTree:
         self.trajectories: list[Trajectory] = []
         for direction in possible_init_directions:
             # This will either create a new node or use an existing one
-            root_node = self.registry.get_or_create_node(init_position, direction)
-            trajectory = Trajectory(root_node, self.num_step)
+            root = self.registry.get_or_create_node(init_position, direction)
+            self.roots.append(root)
+            trajectory = Trajectory(root, self.num_step)
             self.trajectories.append(trajectory)
             self._register_trajectory_in_index(trajectory)
 
@@ -72,6 +73,227 @@ class TrajectoryTree:
 
         # Flag to track if we've performed a reset (detected agent) yet
         self.has_reset = False
+
+
+    def step(self) -> int:
+        """
+        Expand all valid trajectories by one step, but only expanding the
+        longest and shortest trajectory that reaches each endpoint.
+
+        When consider_direction=True, trajectories are grouped by (position, direction).
+        When consider_direction=False, trajectories are grouped only by position,
+        significantly reducing the number of trajectories.
+
+        For each endpoint, we select:
+        1. The shortest trajectory (fewest steps to reach that point)
+        2. The longest trajectory (if different from the shortest)
+
+        Periodically validates a random sample of trajectories to ensure
+        invalid trajectories are properly identified.
+
+        Returns:
+            Number of new trajectories added
+        """
+        self.num_step += 1
+
+        if not self.trajectories:
+            # self._restart_from_discarded()
+            return len(self.trajectories)
+
+        before_len = len(self.trajectories)
+
+        old_edge_trajectories = self.edge_trajectories
+        print(f"Updating from {len(old_edge_trajectories)} trajectories")
+        self.edge_trajectories = []  # Clear edge trajectories for this step
+
+        # Mapping of endpoint keys to trajectories
+        endpoint_to_trajectories = {}
+
+        # Group trajectories by their endpoints
+        for traj in old_edge_trajectories:
+            # Skip invalid trajectories
+            if traj.to_delete:
+                continue
+
+            traj.discarded = True
+
+            # Get key for this trajectory's endpoint
+            key = traj.get_endpoint_key(self.consider_direction)
+            if not key:
+                continue
+
+            if key not in endpoint_to_trajectories:
+                endpoint_to_trajectories[key] = []
+            endpoint_to_trajectories[key].append(traj)
+
+        # For each endpoint, select the shortest and longest trajectories
+        selected_trajectories: list[Trajectory] = []
+        for key, trajectories in endpoint_to_trajectories.items():
+            # Sort by trajectory length (shorter first)
+            trajectories.sort(key=lambda t: len(t.route))
+
+            # Always select the shortest trajectory
+            shortest = trajectories[0]
+            shortest.discarded = False
+            selected_trajectories.append(shortest)
+
+            # Also select the longest if different
+            if len(trajectories) > 1 and len(trajectories[-1].route) > len(shortest.route):
+                longest = trajectories[-1]
+                longest.discarded = False
+                selected_trajectories.append(longest)
+
+        # Add discarded trajectories to discard_edge_trajectories
+        for traj in old_edge_trajectories:
+            if traj.discarded:
+                self.discard_edge_trajectories.append(traj)
+
+        print(f"Total discard: {len(self.discard_edge_trajectories)}")
+        # print(f"Valid discarded: {len([0 for traj in self.discard_edge_trajectories if not traj.to_delete])}")
+
+        # Expand selected trajectories
+        for trajectory in selected_trajectories:
+            new_trajectories = trajectory.get_new_trajectories(self.num_step, max_backtrack=self.max_backtrack)
+            if new_trajectories:
+                # Add valid new trajectories
+                for new_traj in new_trajectories:
+                    self.trajectories.append(new_traj)
+                    self._register_trajectory_in_index(new_traj)
+                    self.edge_trajectories.append(new_traj)
+
+        # Return count of new trajectories
+        return len(self.trajectories) - before_len
+
+    def prune(self, information: list[tuple[Point, Tile]], seeking_scout: bool = True):
+        """
+        1. when I encounter the agent, I can destroy all trajectories since the agent's position is known
+        2. when I encounter a tile that has not been visited, I remove all trajectories containing that tile (when seeking scout)
+        3. when I encounter a tile that has been visited, I remove all trajectories not containing that tile (when seeking scout)
+        4. when I encounter a tile and it has no agent, I remove all trajectories ending with that tile (when seeking scout)
+
+        Args:
+            information (list[tuple[Point, Tile]]): recently updated/observed tiles
+            seeking_scout (bool): If True, look for scout agent. If False, look for guard agent.
+        """
+        # # Process agent sightings first (early exit)
+        # agent_position = self._check_for_agent(information, seeking_scout)
+        # if agent_position is not None:
+        #     self._reset_trajectories_for_agent(agent_position)
+        #     return
+
+        # Track newly discovered ambiguous tiles
+        self._track_ambiguous_tiles(information)
+
+        if seeking_scout:
+            self._prune_by_tile_content(information)
+
+        self._clean_up_trajectories()
+
+        if len(self.trajectories) == 0:
+            self.trajectories = Trajectory.from_points(
+                self.roots,
+                self.temporal_constraints[-1].route.contains,
+                self.num_step,
+                self.registry
+            )
+            self.edge_trajectories = self.trajectories.copy()
+
+    @property
+    def probability_density(self) -> NDArray[np.float32]:
+        """
+        Calculate a probability density over all grid positions.
+
+        This method computes how likely each position is to contain an agent,
+        based on the number of valid trajectories passing through it.
+
+        Returns:
+            numpy.ndarray: 2D array with probability for each position
+        """
+        # Initialize empty grid
+        density = np.zeros((self.size, self.size), dtype=np.float32)
+
+        if not self.trajectories:
+            return density
+
+        # Count trajectories passing through each cell
+        for trajectory in self.trajectories:
+            if trajectory.to_delete:
+                continue
+
+            # last_node = trajectory.get_last_node()
+            last_node = trajectory.tail
+            if not last_node:
+                continue
+
+            # Add 1 to the density at the endpoint position
+            pos = last_node.position
+            density[pos.y, pos.x] += 1
+
+        # Normalize to get probability density
+        total = density.sum()
+        if total > 0:
+            density = density / total
+
+        return density
+
+    @property
+    def path_density(self) -> NDArray[np.float32]:
+        """
+        Calculate a probability density over all grid positions based on entire paths.
+
+        Unlike probability_density which only considers endpoints, this method
+        distributes the probability across all nodes in each trajectory's path.
+        Each node in a trajectory gets 1/n of the trajectory's weight, where n is
+        the number of nodes in that trajectory.
+
+        Returns:
+            numpy.ndarray: 2D array with path density for each position
+        """
+        # Initialize empty grid
+        density = np.zeros((self.size, self.size), dtype=np.float32)
+
+        if not self.trajectories:
+            return density
+
+        # Distribute density across all nodes in each trajectory
+        for trajectory in self.trajectories:
+            if trajectory.to_delete:
+                continue
+
+            # Skip empty trajectories
+            if not trajectory.nodes:
+                continue
+
+            # Calculate weight per node (1 divided by number of nodes)
+            weight_per_node = 1.0 / len(trajectory.nodes)
+
+            # Add the weight to each position in the trajectory
+            for node in trajectory.nodes:
+                pos = node.position
+                density[pos.y, pos.x] += weight_per_node
+
+        # Normalize to get probability density
+        total = density.sum()
+        if total > 0:
+            density = density / total
+
+        return density
+
+    def check_wall_trajectories(self, key: Point | DirectionalNode):
+        """
+        Instead of checking EVERY trajectory for validity, only check trajectories which
+        contain point/node with updated wall information.
+
+        Args:
+            key (Point | DirectionalNode)
+        """
+        if isinstance(key, DirectionalNode):
+            trajectories = self.node_index[key]
+        elif isinstance(key, Point):
+            trajectories = self.position_index[key]
+
+        for traj in trajectories:
+            traj.get_last_node()
 
     def _register_trajectory_in_index(self, trajectory: Trajectory):
         """Register a trajectory in the position index."""
@@ -99,31 +321,6 @@ class TrajectoryTree:
         self.edge_trajectories.clear()
         self.position_index.clear()
         self.tail_position_index.clear()
-
-    def prune(self, information: list[tuple[Point, Tile]], seeking_scout: bool = True):
-        """
-        1. when I encounter the agent, I can destroy all trajectories since the agent's position is known
-        2. when I encounter a tile that has not been visited, I remove all trajectories containing that tile (when seeking scout)
-        3. when I encounter a tile that has been visited, I remove all trajectories not containing that tile (when seeking scout)
-        4. when I encounter a tile and it has no agent, I remove all trajectories ending with that tile (when seeking scout)
-
-        Args:
-            information (list[tuple[Point, Tile]]): recently updated/observed tiles
-            seeking_scout (bool): If True, look for scout agent. If False, look for guard agent.
-        """
-        # # Process agent sightings first (early exit)
-        # agent_position = self._check_for_agent(information, seeking_scout)
-        # if agent_position is not None:
-        #     self._reset_trajectories_for_agent(agent_position)
-        #     return
-
-        # Track newly discovered ambiguous tiles
-        self._track_ambiguous_tiles(information)
-
-        if seeking_scout:
-            self._prune_by_tile_content(information)
-
-        self._clean_up_trajectories()
 
     def _check_for_agent(self, information, seeking_scout):
         """Check if an agent is present in the information."""
@@ -283,176 +480,6 @@ class TrajectoryTree:
         if has_deleted_edge:
             self.edge_trajectories = self._get_edge_trajectories()
 
-    def step(self) -> int:
-        """
-        Expand all valid trajectories by one step, but only expanding the
-        longest and shortest trajectory that reaches each endpoint.
-
-        When consider_direction=True, trajectories are grouped by (position, direction).
-        When consider_direction=False, trajectories are grouped only by position,
-        significantly reducing the number of trajectories.
-
-        For each endpoint, we select:
-        1. The shortest trajectory (fewest steps to reach that point)
-        2. The longest trajectory (if different from the shortest)
-
-        Periodically validates a random sample of trajectories to ensure
-        invalid trajectories are properly identified.
-
-        Returns:
-            Number of new trajectories added
-        """
-        self.num_step += 1
-
-        if not self.trajectories:
-            # self._restart_from_discarded()
-            return len(self.trajectories)
-
-        before_len = len(self.trajectories)
-
-        old_edge_trajectories = self.edge_trajectories
-        print(f"Updating from {len(old_edge_trajectories)} trajectories")
-        self.edge_trajectories = []  # Clear edge trajectories for this step
-
-        # Mapping of endpoint keys to trajectories
-        endpoint_to_trajectories = {}
-
-        # Group trajectories by their endpoints
-        for traj in old_edge_trajectories:
-            # Skip invalid trajectories
-            if traj.to_delete:
-                continue
-
-            traj.discarded = True
-
-            # Get key for this trajectory's endpoint
-            key = traj.get_endpoint_key(self.consider_direction)
-            if not key:
-                continue
-
-            if key not in endpoint_to_trajectories:
-                endpoint_to_trajectories[key] = []
-            endpoint_to_trajectories[key].append(traj)
-
-        # For each endpoint, select the shortest and longest trajectories
-        selected_trajectories: list[Trajectory] = []
-        for key, trajectories in endpoint_to_trajectories.items():
-            # Sort by trajectory length (shorter first)
-            trajectories.sort(key=lambda t: len(t.route))
-
-            # Always select the shortest trajectory
-            shortest = trajectories[0]
-            shortest.discarded = False
-            selected_trajectories.append(shortest)
-
-            # Also select the longest if different
-            if len(trajectories) > 1 and len(trajectories[-1].route) > len(shortest.route):
-                longest = trajectories[-1]
-                longest.discarded = False
-                selected_trajectories.append(longest)
-
-        # Add discarded trajectories to discard_edge_trajectories
-        for traj in old_edge_trajectories:
-            if traj.discarded:
-                self.discard_edge_trajectories.append(traj)
-
-        print(f"Total discard: {len(self.discard_edge_trajectories)}")
-        # print(f"Valid discarded: {len([0 for traj in self.discard_edge_trajectories if not traj.to_delete])}")
-
-        # Expand selected trajectories
-        for trajectory in selected_trajectories:
-            new_trajectories = trajectory.get_new_trajectories(self.num_step, max_backtrack=self.max_backtrack)
-            if new_trajectories:
-                # Add valid new trajectories
-                for new_traj in new_trajectories:
-                    self.trajectories.append(new_traj)
-                    self._register_trajectory_in_index(new_traj)
-                    self.edge_trajectories.append(new_traj)
-
-        # Return count of new trajectories
-        return len(self.trajectories) - before_len
-
-    @property
-    def probability_density(self) -> NDArray[np.float32]:
-        """
-        Calculate a probability density over all grid positions.
-
-        This method computes how likely each position is to contain an agent,
-        based on the number of valid trajectories passing through it.
-
-        Returns:
-            numpy.ndarray: 2D array with probability for each position
-        """
-        # Initialize empty grid
-        density = np.zeros((self.size, self.size), dtype=np.float32)
-
-        if not self.trajectories:
-            return density
-
-        # Count trajectories passing through each cell
-        for trajectory in self.trajectories:
-            if trajectory.to_delete:
-                continue
-
-            # last_node = trajectory.get_last_node()
-            last_node = trajectory.tail
-            if not last_node:
-                continue
-
-            # Add 1 to the density at the endpoint position
-            pos = last_node.position
-            density[pos.y, pos.x] += 1
-
-        # Normalize to get probability density
-        total = density.sum()
-        if total > 0:
-            density = density / total
-
-        return density
-
-    @property
-    def path_density(self) -> NDArray[np.float32]:
-        """
-        Calculate a probability density over all grid positions based on entire paths.
-
-        Unlike probability_density which only considers endpoints, this method
-        distributes the probability across all nodes in each trajectory's path.
-        Each node in a trajectory gets 1/n of the trajectory's weight, where n is
-        the number of nodes in that trajectory.
-
-        Returns:
-            numpy.ndarray: 2D array with path density for each position
-        """
-        # Initialize empty grid
-        density = np.zeros((self.size, self.size), dtype=np.float32)
-
-        if not self.trajectories:
-            return density
-
-        # Distribute density across all nodes in each trajectory
-        for trajectory in self.trajectories:
-            if trajectory.to_delete:
-                continue
-
-            # Skip empty trajectories
-            if not trajectory.nodes:
-                continue
-
-            # Calculate weight per node (1 divided by number of nodes)
-            weight_per_node = 1.0 / len(trajectory.nodes)
-
-            # Add the weight to each position in the trajectory
-            for node in trajectory.nodes:
-                pos = node.position
-                density[pos.y, pos.x] += weight_per_node
-
-        # Normalize to get probability density
-        total = density.sum()
-        if total > 0:
-            density = density / total
-
-        return density
-
     def _destroy_trajectory_families(self):
         """
         Starting from any invalid trajectory, traverse up ._inherited_from,
@@ -495,15 +522,6 @@ class TrajectoryTree:
                 valid_trajectories.append(traj)
         self.trajectories = valid_trajectories
         self.discard_edge_trajectories = [traj for traj in self.discard_edge_trajectories if not traj.to_delete]
-
-    def check_wall_trajectories(self, key: Point | DirectionalNode):
-        if isinstance(key, DirectionalNode):
-            trajectories = self.node_index[key]
-        elif isinstance(key, Point):
-            trajectories = self.position_index[key]
-
-        for traj in trajectories:
-            traj.get_last_node()
 
     def _restart_from_discarded(self):
         """
