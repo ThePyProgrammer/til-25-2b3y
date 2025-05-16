@@ -223,7 +223,7 @@ class Trajectory:
         If the action is invalid, mark this trajectory as invalid.
         """
         self.route.append(action)
-        self.step = step
+        self.created_at = step
 
         # Check if this action is valid
         self.get_last_node()
@@ -301,7 +301,7 @@ class Trajectory:
     def tail(self) -> DirectionalNode:
         return self.nodes[-1]
 
-    def get_new_trajectories(self, step: int, max_backtrack: int = 3):
+    def get_new_trajectories(self, step: int, max_backtrack: Optional[int] = None):
         """
         Get new trajectories by exploring all valid actions from the current endpoint.
 
@@ -319,8 +319,9 @@ class Trajectory:
         if not last_node:
             return []
 
-        if self.has_backtrack(max_backtrack):
-            return []
+        if max_backtrack is not None:
+            if self.has_backtrack(max_backtrack):
+                return []
 
         new_trajectories = []
 
@@ -374,7 +375,7 @@ class Trajectory:
 
         last_node = self.tail
         if last_node:
-            return f"Trajectory to {last_node.position} {last_node.direction} from {self.head.position} {self.head.direction} via {self.route}"
+            return f"Trajectory to {last_node.position} {last_node.direction} from {self.head.position} {self.head.direction} via {self.route}, created at: {self.created_at}"
         return f"Incomplete Trajectory: {self.route}"
 
     def __repr__(self):
@@ -454,6 +455,39 @@ class TrajectoryConstraints:
             self.route.copy(),
             self.tail.copy()
         )
+
+class TemporalTrajectoryConstraints:
+    def __init__(self):
+        self._observed_constraints: list[TrajectoryConstraints] = []
+        self._temporal_constraints: list[TrajectoryConstraints] = []
+
+    def update(self, constraints: TrajectoryConstraints):
+        self._observed_constraints.append(constraints)
+        self._temporal_constraints.append(constraints)
+
+        for historical_constraints in self._temporal_constraints:
+            historical_constraints.route.excludes.extend(constraints.route.excludes)
+            historical_constraints.route.contains = list(set(
+                historical_constraints.route.contains
+            ))
+            # historical_constraints.tail.excludes.extend(constraints.tail.excludes)
+
+        current_step = len(self._observed_constraints) - 1
+        previous_step = current_step - 1
+
+        if previous_step >= 0:
+            self._temporal_constraints[current_step].route.contains.extend(
+                self._temporal_constraints[previous_step].route.contains
+            )
+            self._temporal_constraints[current_step].route.contains = list(set(
+                self._temporal_constraints[current_step].route.contains
+            ))
+
+    def __len__(self):
+        return len(self._temporal_constraints)
+
+    def __getitem__(self, step: int) -> TrajectoryConstraints:
+        return self._temporal_constraints[step]
 
 class TrajectoryIndex:
     def __init__(self):
@@ -539,7 +573,7 @@ class TrajectoryTree:
         self.edge_trajectories: list[Trajectory] = self.trajectories.copy()
         self.discard_edge_trajectories: list[Trajectory] = [] # [(step it was discarded, edge_trajectory), ...]
 
-        self.temporal_constraints: list[TrajectoryConstraints] = []
+        self.temporal_constraints: TemporalTrajectoryConstraints = TemporalTrajectoryConstraints()
 
         # Add a set to track ambiguous tiles (visited tiles we should ignore for pruning)
         self.ambiguous_tiles = set()
@@ -595,6 +629,12 @@ class TrajectoryTree:
             information (list[tuple[Point, Tile]]): recently updated/observed tiles
             seeking_scout (bool): If True, look for scout agent. If False, look for guard agent.
         """
+        # # Process agent sightings first (early exit)
+        # agent_position = self._check_for_agent(information, seeking_scout)
+        # if agent_position is not None:
+        #     self._reset_trajectories_for_agent(agent_position)
+        #     return
+
         # Track newly discovered ambiguous tiles
         self._track_ambiguous_tiles(information)
 
@@ -602,12 +642,6 @@ class TrajectoryTree:
             self._prune_by_tile_content(information)
 
         self._clean_up_trajectories()
-
-        # Process agent sightings first (early exit)
-        # agent_position = self._check_for_agent(information, seeking_scout)
-        # if agent_position is not None:
-        #     self._reset_trajectories_for_agent(agent_position)
-        #     return
 
     def _check_for_agent(self, information, seeking_scout):
         """Check if an agent is present in the information."""
@@ -634,17 +668,17 @@ class TrajectoryTree:
             self.has_reset = True
 
         # Clear existing trajectories and their index
-        # self._clear_all_trajectories()
+        self._clear_all_trajectories()
 
         # Create new trajectories at the agent's position, considering all possible directions
-        # for direction in Direction:
-        #     root_node = self.registry.get_or_create_node(agent_position, direction)
-        #     trajectory = Trajectory(root_node)
-        #     self.trajectories.append(trajectory)
-        #     self._register_trajectory_in_index(trajectory)
+        for direction in Direction:
+            root_node = self.registry.get_or_create_node(agent_position, direction)
+            trajectory = Trajectory(root_node, self.num_step)
+            self.trajectories.append(trajectory)
+            self._register_trajectory_in_index(trajectory)
 
         # Update edge trajectories
-        # self.edge_trajectories = self.trajectories.copy()
+        self.edge_trajectories = self.trajectories.copy()
 
     def _track_ambiguous_tiles(self, information):
         """Track newly discovered empty tiles as ambiguous if we've already had a reset."""
@@ -686,7 +720,7 @@ class TrajectoryTree:
             if tile.is_visible and (tile.is_recon or tile.is_mission):
                 constraints.route.excludes.append(position)
             # Case 3: visited - only keep trajectories containing this position
-            if tile.is_empty:
+            if tile.is_empty and not self.has_reset:
                 constraints.route.contains.append(position)
             # Case 4: no agent - remove trajectories ending at this position
             if not tile.has_scout:
@@ -696,7 +730,6 @@ class TrajectoryTree:
         if not constraints:
             return  # No filtering needed
 
-
         # bugged? scout doesn't collect point at spawn location
         if Point(0, 0) in constraints.route.excludes:
             constraints.route.excludes.remove(Point(0, 0))
@@ -705,7 +738,7 @@ class TrajectoryTree:
             constraints.tail.excludes.remove(Point(0, 0))
 
         self._apply_filtering(constraints)
-        self.temporal_constraints.append(constraints)
+        self.temporal_constraints.update(constraints)
 
     def _apply_filtering(self, constraints: TrajectoryConstraints):
         """Apply filtering based on position constraints."""
@@ -790,7 +823,8 @@ class TrajectoryTree:
         self.num_step += 1
 
         if not self.trajectories:
-            return 0
+            # self._restart_from_discarded()
+            return len(self.trajectories)
 
         before_len = len(self.trajectories)
 
@@ -819,7 +853,7 @@ class TrajectoryTree:
             endpoint_to_trajectories[key].append(traj)
 
         # For each endpoint, select the shortest and longest trajectories
-        selected_trajectories = []
+        selected_trajectories: list[Trajectory] = []
         for key, trajectories in endpoint_to_trajectories.items():
             # Sort by trajectory length (shorter first)
             trajectories.sort(key=lambda t: len(t.route))
@@ -988,3 +1022,99 @@ class TrajectoryTree:
 
         for traj in trajectories:
             traj.get_last_node()
+
+    def _restart_from_discarded(self):
+        """
+        When all trajectories have been eliminated, this method tries to resurrect
+        discarded edge trajectories from previous steps and propagate them forward
+        to the current step, applying appropriate temporal constraints.
+
+        Temporal constraints are applied as follows:
+        - excludes: applied to all steps
+        - contains: applied only to the current step
+
+        Returns:
+            bool: True if any trajectories were successfully resurrected, False otherwise
+        """
+        if len(self.trajectories) > 0:
+            return True  # No need to restart if we still have valid trajectories
+
+        # Clear any existing trajectories marked for deletion
+        self._clean_up_trajectories()
+
+        print(self.temporal_constraints[-1])
+
+        # Go backwards through time steps looking for discarded trajectories
+        for backward_step in range(self.num_step, -1, -1):
+            candidates: list[Trajectory] = [traj for traj in self.discard_edge_trajectories if traj.created_at == backward_step]
+
+            if backward_step == 0:
+                for direction in Direction:
+                    # This will either create a new node or use an existing one
+                    root_node = self.registry.get_or_create_node(Point(0, 0), direction)
+                    trajectory = Trajectory(root_node, self.num_step)
+                    candidates.append(trajectory)
+
+            if not candidates:
+                continue
+
+            print(f"Restarting from {len(candidates)} candidates at {backward_step}")
+
+            for forward_step in range(backward_step + 1, self.num_step + 1):
+                new_candidates: list[Trajectory] = []
+                new_candidates.extend(candidates)
+
+                for candidate in candidates:
+                    new_trajectories = candidate.get_new_trajectories(forward_step, max_backtrack=3)
+                    new_candidates.extend(new_trajectories)
+
+                candidates = new_candidates
+
+                print(f"Expanded to {len(candidates)} candidates")
+
+                for traj in candidates:
+                    # Get constraints for this trajectory at this forward step
+                    constraints = self.temporal_constraints[forward_step] if forward_step < len(self.temporal_constraints) else None
+
+                    if constraints:
+                        for node in traj.nodes:
+                            if node in constraints.route.excludes:
+                                traj.prune()
+                                break
+
+                        for node in constraints.route.contains:
+                            if node not in traj.nodes:
+                                traj.prune()
+                                break
+
+                        if traj.tail.position in constraints.tail.excludes:
+                            traj.prune()
+                            break
+
+                        if traj.tail.position not in constraints.tail.contains:
+                            traj.prune()
+                            break
+
+                candidates = [traj for traj in candidates if not traj.to_delete]
+                print(f"Filtered to {len(candidates)} candidates")
+
+                if not candidates:
+                    continue
+
+            # for traj in candidates:
+            #     constraints = self.temporal_constraints[-1]
+
+            if len(candidates) > 0:
+                print(candidates[-1])
+                print(candidates[-1].nodes)
+
+            candidates = [traj for traj in candidates if not traj.to_delete]
+            print(f"Filtered to {len(candidates)} candidates")
+
+            # print(f"Found {len(candidates)} candidates")
+
+            if len(candidates) > 0:
+                break
+
+        self.trajectories = candidates
+        self.edge_trajectories = self.trajectories.copy()

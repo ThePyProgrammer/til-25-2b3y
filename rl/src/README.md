@@ -29,5 +29,5 @@
 
 ## testing
 ```
-python demo.py --record --control 0,1,2,3 --scout_target 15,15 --seed 720354
+python demo.py --control 0,1,2,3 --scout_target 15,15 --seed 720354 --human
 ```
