@@ -175,11 +175,11 @@ class TrajectoryTree:
             information (list[tuple[Point, Tile]]): recently updated/observed tiles
             seeking_scout (bool): If True, look for scout agent. If False, look for guard agent.
         """
-        # # Process agent sightings first (early exit)
-        # agent_position = self._check_for_agent(information, seeking_scout)
-        # if agent_position is not None:
-        #     self._reset_trajectories_for_agent(agent_position)
-        #     return
+        # Process agent sightings first (early exit)
+        agent_position = self._check_for_agent(information, seeking_scout)
+        if agent_position is not None:
+            self._reset_trajectories_for_agent(agent_position)
+            return
 
         # Track newly discovered ambiguous tiles
         self._track_ambiguous_tiles(information)
@@ -193,8 +193,8 @@ class TrajectoryTree:
             self.trajectories = Trajectory.from_points(
                 self.roots,
                 self.temporal_constraints[-1].route.contains,
-                self.num_step,
-                self.registry
+                registry=self.registry,
+                budget=self.num_step,
             )
             self.edge_trajectories = self.trajectories.copy()
 
@@ -325,7 +325,7 @@ class TrajectoryTree:
     def _check_for_agent(self, information, seeking_scout):
         """Check if an agent is present in the information."""
         for position, tile in information:
-            if (seeking_scout and tile.has_scout) or (not seeking_scout and tile.has_guard):
+            if ((seeking_scout and tile.has_scout) or (not seeking_scout and tile.has_guard)):
                 return position
         return None
 
