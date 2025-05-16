@@ -189,7 +189,7 @@ def main():
 
     # Initialize map and create trajectory tree
     recon_map = Map()
-    recon_map.create_trajectory_tree(Point(0, 0))
+    recon_map.create_trajectory_tree(Point(0, 0), parallel=True)
 
     pathfinder_conf = PathfinderConfig(
         use_viewcone = False

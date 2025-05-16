@@ -377,7 +377,11 @@ class Trajectory:
     def __repr__(self):
         return self.__str__()
 
-    def has_backtrack(self, max_backtrack: int = 3) -> bool:
+    def has_backtrack(
+        self,
+        max_backtrack: int = 3,
+        consider_direction: bool = False
+    ) -> bool:
         """
         Check if this trajectory backtracks more than the allowed number of steps.
 
@@ -390,14 +394,14 @@ class Trajectory:
         if not self.nodes or len(self.nodes) <= 1:
             return False  # Need at least 2 nodes to backtrack
 
-        visited_positions = set()
+        visited = set()
         backtrack_count = 0
 
         for node in self.nodes:
-            pos = node.position
+            current = node if consider_direction else node.position
 
-            if pos not in visited_positions:
-                visited_positions.add(pos)
+            if current not in visited:
+                visited.add(current)
             else:
                 backtrack_count += 1
                 if backtrack_count > max_backtrack:
@@ -428,6 +432,12 @@ class Constraints:
     def __bool__(self):
         return len(self.contains) > 0 or len(self.excludes) > 0
 
+    def copy(self):
+        return Constraints(
+            self.contains[:],
+            self.excludes[:]
+        )
+
 @dataclass
 class TrajectoryConstraints:
     route: Constraints
@@ -435,6 +445,12 @@ class TrajectoryConstraints:
 
     def __bool__(self):
         return bool(self.route) or bool(self.tail)
+
+    def copy(self):
+        return TrajectoryConstraints(
+            self.route.copy(),
+            self.tail.copy()
+        )
 
 class TrajectoryIndex:
     def __init__(self):
