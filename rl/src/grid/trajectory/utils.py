@@ -1,97 +1,120 @@
-from dataclasses import dataclass
-from typing import Any
-
-from ..utils import Point
+from typing import Optional, Any
 from .trajectory import Trajectory
+from ..utils.geometry import Point
+from ..utils.enums import Direction
+from ..node import NodeRegistry
+from .constraints import filter_trajectories_by_constraints, TrajectoryConstraints, TemporalTrajectoryConstraints
 
-@dataclass
-class Constraints:
+
+def fast_forward_trajectories(
+    trajectories: list[Trajectory],
+    budget: int,
+    temporal_constraints: TemporalTrajectoryConstraints,
+    registry: NodeRegistry
+) -> list[Trajectory]:
     """
-    Point constraints
+    When all trajectories have been eliminated, this method tries to resurrect
+    discarded edge trajectories from previous steps and propagate them forward
+    to the current step, applying appropriate temporal constraints.
+
+    Args:
+        discard_edge_trajectories: List of previously discarded trajectories.
+        budget: The maximum number of steps to consider.
+        temporal_constraints: List of constraints for each time step.
+        registry: Node registry for creating new nodes.
+
+    Returns:
+        list[Trajectory]: List of resurrected trajectories
     """
-    contains: list[Point]
-    excludes: list[Point]
-
-    def __bool__(self):
-        return len(self.contains) > 0 or len(self.excludes) > 0
-
-    def copy(self):
-        return Constraints(
-            self.contains[:],
-            self.excludes[:]
+    # Go backwards through time steps looking for discarded trajectories
+    for backward_step in range(budget - 1, -1, -1):
+        # Get candidates from this time step
+        candidates: list[Trajectory] = get_initial_candidates(
+            trajectories,
+            backward_step,
+            budget,
+            registry
         )
 
-@dataclass
-class TrajectoryConstraints:
-    route: Constraints
-    tail: Constraints
+        if not candidates:
+            continue
 
-    def __bool__(self):
-        return bool(self.route) or bool(self.tail)
+        print(f"Restarting from {len(candidates)} candidates at {backward_step}")
 
-    def copy(self):
-        return TrajectoryConstraints(
-            self.route.copy(),
-            self.tail.copy()
+        # Forward propagate candidates
+        candidates = propagate_candidates_forward(
+            candidates,
+            backward_step,
+            budget,
+            temporal_constraints
         )
 
-class TemporalTrajectoryConstraints:
-    def __init__(self):
-        self._observed_constraints: list[TrajectoryConstraints] = []
-        self._temporal_constraints: list[TrajectoryConstraints] = []
+        if candidates:
+            print(f"Found {len(candidates)} valid candidates")
+            return candidates
 
-    def update(self, constraints: TrajectoryConstraints):
-        self._observed_constraints.append(constraints)
-        self._temporal_constraints.append(constraints)
+    return []
 
-        for historical_constraints in self._temporal_constraints:
-            historical_constraints.route.excludes.extend(constraints.route.excludes)
-            historical_constraints.route.contains = list(set(
-                historical_constraints.route.contains
-            ))
-            # historical_constraints.tail.excludes.extend(constraints.tail.excludes)
+def get_initial_candidates(
+    trajectories: list[Trajectory],
+    step: int,
+    budget: int,
+    registry: Optional[Any] = None
+) -> list[Trajectory]:
+    """Get initial trajectory candidates for the given step."""
+    candidates = [traj for traj in trajectories if traj.created_at == step]
 
-        current_step = len(self._observed_constraints) - 1
-        previous_step = current_step - 1
+    # If at step 0 and no candidates, create new root trajectories
+    if step == 0 and registry:
+        for direction in Direction:
+            root_node = registry.get_or_create_node(Point(0, 0), direction)
+            trajectory = Trajectory(root_node, budget)
+            candidates.append(trajectory)
 
-        if previous_step >= 0:
-            self._temporal_constraints[current_step].route.contains.extend(
-                self._temporal_constraints[previous_step].route.contains
-            )
-            self._temporal_constraints[current_step].route.contains = list(set(
-                self._temporal_constraints[current_step].route.contains
-            ))
+    return candidates
 
-    def __len__(self):
-        return len(self._temporal_constraints)
+def propagate_candidates_forward(
+    candidates: list[Trajectory],
+    start_step: int,
+    budget: int,
+    temporal_constraints: TemporalTrajectoryConstraints
+) -> list[Trajectory]:
+    """Propagate candidates forward through time, applying constraints at each step."""
+    for forward_step in range(start_step + 1, budget + 1):
+        # Expand trajectories
+        new_candidates: list[Trajectory] = expand_trajectories(candidates, forward_step)
 
-    def __getitem__(self, step: int) -> TrajectoryConstraints:
-        return self._temporal_constraints[step]
+        # Apply constraints for this step
+        step_constraints: Optional[TrajectoryConstraints] = (
+            temporal_constraints[forward_step] if forward_step < len(temporal_constraints)
+            else None
+        )
+        candidates = (
+            filter_trajectories_by_constraints(new_candidates, step_constraints) if step_constraints
+            else new_candidates
+        )
 
-class TrajectoryIndex:
-    def __init__(self):
-        self._index: dict[Any, set[Trajectory]] = {}
+        print(f"Step {forward_step}: {len(candidates)} candidates remain after filtering")
 
-    def add(self, key: Any, trajectory: Trajectory) -> None:
-        if key not in self._index:
-            self._index[key] = set()
-        self._index[key].add(trajectory)
+        if not candidates:
+            break
 
-    def remove(self, key: Any, trajectory: Trajectory) -> None:
-        if key in self._index and trajectory in self._index[key]:
-            trajectory.prune()
-            self._index[key].remove(trajectory)
-            # Clean up empty sets
-            if not self._index[key]:
-                del self._index[key]
+    return candidates
 
-    def clear(self):
-        self._index.clear()
+def expand_trajectories(
+    trajectories: list[Trajectory],
+    step: int,
+    max_backtrack: int = 3
+) -> list[Trajectory]:
+    """Expand trajectories by generating new ones."""
+    expanded: list[Trajectory] = trajectories.copy()
 
-    def __contains__(self, key: Any):
-        return key in self._index
+    for trajectory in trajectories:
+        new_trajectories: list[Trajectory] = trajectory.get_new_trajectories(
+            step,
+            max_backtrack=max_backtrack
+        )
+        expanded.extend(new_trajectories)
 
-    def __getitem__(self, key: Any):
-        if key not in self._index:
-            self._index[key] = set()
-        return self._index[key]
+    print(f"Expanded to {len(expanded)} candidates")
+    return expanded

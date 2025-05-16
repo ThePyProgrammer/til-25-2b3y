@@ -7,7 +7,8 @@ from ..utils import Direction, Point, Tile
 from ..node import NodeRegistry, DirectionalNode
 
 from .trajectory import Trajectory
-from .utils import Constraints, TrajectoryConstraints, TemporalTrajectoryConstraints, TrajectoryIndex
+from .index import TrajectoryIndex
+from .constraints import Constraints, TrajectoryConstraints, TemporalTrajectoryConstraints
 
 class TrajectoryTree:
     def __init__(
@@ -522,99 +523,3 @@ class TrajectoryTree:
                 valid_trajectories.append(traj)
         self.trajectories = valid_trajectories
         self.discard_edge_trajectories = [traj for traj in self.discard_edge_trajectories if not traj.to_delete]
-
-    def _restart_from_discarded(self):
-        """
-        When all trajectories have been eliminated, this method tries to resurrect
-        discarded edge trajectories from previous steps and propagate them forward
-        to the current step, applying appropriate temporal constraints.
-
-        Temporal constraints are applied as follows:
-        - excludes: applied to all steps
-        - contains: applied only to the current step
-
-        Returns:
-            bool: True if any trajectories were successfully resurrected, False otherwise
-        """
-        if len(self.trajectories) > 0:
-            return True  # No need to restart if we still have valid trajectories
-
-        # Clear any existing trajectories marked for deletion
-        self._clean_up_trajectories()
-
-        print(self.temporal_constraints[-1])
-
-        # Go backwards through time steps looking for discarded trajectories
-        for backward_step in range(self.num_step, -1, -1):
-            candidates: list[Trajectory] = [traj for traj in self.discard_edge_trajectories if traj.created_at == backward_step]
-
-            if backward_step == 0:
-                for direction in Direction:
-                    # This will either create a new node or use an existing one
-                    root_node = self.registry.get_or_create_node(Point(0, 0), direction)
-                    trajectory = Trajectory(root_node, self.num_step)
-                    candidates.append(trajectory)
-
-            if not candidates:
-                continue
-
-            print(f"Restarting from {len(candidates)} candidates at {backward_step}")
-
-            for forward_step in range(backward_step + 1, self.num_step + 1):
-                new_candidates: list[Trajectory] = []
-                new_candidates.extend(candidates)
-
-                for candidate in candidates:
-                    new_trajectories = candidate.get_new_trajectories(forward_step, max_backtrack=3)
-                    new_candidates.extend(new_trajectories)
-
-                candidates = new_candidates
-
-                print(f"Expanded to {len(candidates)} candidates")
-
-                for traj in candidates:
-                    # Get constraints for this trajectory at this forward step
-                    constraints = self.temporal_constraints[forward_step] if forward_step < len(self.temporal_constraints) else None
-
-                    if constraints:
-                        for node in traj.nodes:
-                            if node in constraints.route.excludes:
-                                traj.prune()
-                                break
-
-                        for node in constraints.route.contains:
-                            if node not in traj.nodes:
-                                traj.prune()
-                                break
-
-                        if traj.tail.position in constraints.tail.excludes:
-                            traj.prune()
-                            break
-
-                        if traj.tail.position not in constraints.tail.contains:
-                            traj.prune()
-                            break
-
-                candidates = [traj for traj in candidates if not traj.to_delete]
-                print(f"Filtered to {len(candidates)} candidates")
-
-                if not candidates:
-                    continue
-
-            # for traj in candidates:
-            #     constraints = self.temporal_constraints[-1]
-
-            if len(candidates) > 0:
-                print(candidates[-1])
-                print(candidates[-1].nodes)
-
-            candidates = [traj for traj in candidates if not traj.to_delete]
-            print(f"Filtered to {len(candidates)} candidates")
-
-            # print(f"Found {len(candidates)} candidates")
-
-            if len(candidates) > 0:
-                break
-
-        self.trajectories = candidates
-        self.edge_trajectories = self.trajectories.copy()

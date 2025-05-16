@@ -1,9 +1,11 @@
 from .trajectory import Trajectory
-from .utils import (
+from .index import (
+    TrajectoryIndex
+)
+from .constraints import (
     Constraints,
     TrajectoryConstraints,
     TemporalTrajectoryConstraints,
-    TrajectoryIndex
 )
 from .tree import TrajectoryTree
 
