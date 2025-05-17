@@ -6,6 +6,7 @@ from doctr.io import DocumentFile
 import layoutparser as lp
 
 from spellchecker import SpellChecker
+from spellwise import Levenshtein
 
 
 detection_arch = [
@@ -34,7 +35,7 @@ recognition_arch = [
 class OCRManager:
 
     def __init__(self):
-        self.ocr_model = ocr_predictor(detection_arch[2], recognition_arch[0], pretrained=True)
+        self.ocr_model = ocr_predictor(detection_arch[-3], recognition_arch[1], pretrained=True)
 
         self.lp_model = lp.models.Detectron2LayoutModel(
                     config_path ='lp://PubLayNet/faster_rcnn_R_50_FPN_3x/config', # In model catalog
@@ -44,20 +45,26 @@ class OCRManager:
 
         self.use_spellchecker = True
 
-        self.spell: SpellChecker = SpellChecker()
-        self.spell.word_frequency.load_json("ocr_word_frequency.json")
+        self.reranker: SpellChecker = SpellChecker()
+        self.levenshtein: Levenshtein = Levenshtein()
+        self.reranker.word_frequency.load_json("word_frequency.json")
+        self.levenshtein.add_from_path("words.txt")
 
         self.spellcheck_cache: dict[str, str] = {}
 
-    def _spellcheck(self, word: str):
+    def _spellcheck(self, word: str) -> str:
         if self.use_spellchecker:
             correct = self.spellcheck_cache.get(word, None)
+            
             if correct is None:
-                if word not in self.spell:
-                    correct = self.spell.correction(word)
-                else:
+                if word not in self.reranker:
+                    suggestions = self.levenshtein.get_suggestions(word)
+                    if len(suggestions) > 0:
+                        correct = suggestions[0]['word']
+                if correct is None:
                     correct = word
                 self.spellcheck_cache[word] = correct
+                
             return correct
         else:
             return word
@@ -123,8 +130,6 @@ class OCRManager:
                 block_y1 /= h
                 block_x2 /= w
                 block_y2 /= h
-
-                print(layout_block.coordinates)
 
                 # Find all lines with center point within this block
                 for line in all_lines:

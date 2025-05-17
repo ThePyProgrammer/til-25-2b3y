@@ -26,7 +26,7 @@ recognition_arch = [
 ]
 
 if __name__ == "__main__":
-    ocr_model = ocr_predictor(detection_arch[2], recognition_arch[0], pretrained=True)
+    ocr_model = ocr_predictor(detection_arch[-3], recognition_arch[1], pretrained=True)
 
     lp_model = lp.models.Detectron2LayoutModel(
                 config_path ='lp://PubLayNet/faster_rcnn_R_50_FPN_3x/config', # In model catalog

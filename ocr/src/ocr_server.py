@@ -8,6 +8,7 @@ import base64
 
 from fastapi import FastAPI, Request
 from ocr_manager import OCRManager
+from profiler import start_profiling, stop_profiling
 
 app = FastAPI()
 manager = OCRManager()
@@ -31,8 +32,10 @@ async def ocr(request: Request) -> dict[str, list[str]]:
     # Reads the base-64 encoded audio and decodes it into bytes.
     encoded = [base64.b64decode(instance["b64"]) for instance in inputs_json["instances"]]
 
+    # start_profiling()
     # Performs ASR and appends the result.
     predictions = manager.ocr(encoded)
+    # stop_profiling(lines=20)
 
     return {"predictions": predictions}
 
