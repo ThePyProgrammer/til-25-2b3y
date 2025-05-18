@@ -12,6 +12,11 @@ class TrajectoryIndex:
             self._index[key] = set()
         self._index[key].add(trajectory)
 
+    def update(self, key: Any, trajectories: list[Trajectory]) -> None:
+        if key not in self._index:
+            self._index[key] = set()
+        self._index[key].update(trajectories)
+
     def remove(self, key: Any, trajectory: Trajectory) -> None:
         if key in self._index and trajectory in self._index[key]:
             trajectory.prune()
