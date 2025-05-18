@@ -15,7 +15,7 @@ def create_trajectories_from_constraints(
     temporal_constraints: TemporalTrajectoryConstraints,
     budget: int,
     registry: NodeRegistry,
-    beam_width: int = 100,  # Maximum queue size before pruning
+    beam_width: int = 10,  # Maximum queue size before pruning
     enable_modifications: bool = True,  # Whether to enable trajectory modifications
 ) -> list[Trajectory]:
     """

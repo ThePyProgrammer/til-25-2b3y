@@ -172,10 +172,7 @@ def create_video(frames, output_path, fps=5):
     except Exception as e:
         print(f"MoviePy approach failed with error: {e}. Trying fallback methods...")
 
-def main():
-    # Parse arguments
-    args = parse_arguments()
-
+def main(args):
     if args.profile:
         start_profiling()
 
@@ -324,4 +321,11 @@ def main():
         print(f"Total steps completed: {step}")
 
 if __name__ == "__main__":
-    main()
+    args = parse_arguments()
+
+    try:
+        main(args)
+    except KeyboardInterrupt:
+        pass
+
+    print(f"Seed {args.seed}")

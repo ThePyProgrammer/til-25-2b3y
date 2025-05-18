@@ -270,22 +270,15 @@ def create_video(frames, output_path, fps=5):
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             rgb_frames.append(rgb_frame)
 
-    # Try using MoviePy (preferred method)
-    try:
-        # Create clip from frames
-        clip = ImageSequenceClip(rgb_frames, fps=fps)
+    # Create clip from frames
+    clip = ImageSequenceClip(rgb_frames, fps=fps)
 
-        # Write video file
-        clip.write_videofile(output_path, codec="libx264", fps=fps)
-        print(f"Video saved to {output_path} using MoviePy")
-        return
-    except Exception as e:
-        print(f"MoviePy approach failed with error: {e}. Trying fallback methods...")
+    # Write video file
+    clip.write_videofile(output_path, codec="libx264", fps=fps)
+    print(f"Video saved to {output_path} using MoviePy")
+    return
 
-def main():
-    # Parse arguments
-    args = parse_arguments()
-
+def main(args):
     if args.profile:
         start_profiling()
 
@@ -427,6 +420,7 @@ def main():
             action = None
         elif agent in controlled_agents:
             # Update the controlled agent's map with its observation
+            print(f"reconstructing and predicting for {agent}")
             agent_maps[agent](observation)
 
             # Use the agent's pathfinder to determine action
@@ -576,4 +570,11 @@ def main():
         print(f"Total steps completed: {step}")
 
 if __name__ == "__main__":
-    main()
+    args = parse_arguments()
+
+    try:
+        main(args)
+    except KeyboardInterrupt:
+        pass
+
+    print(f"Seed {args.seed}")

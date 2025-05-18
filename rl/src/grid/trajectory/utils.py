@@ -100,12 +100,12 @@ def propagate_candidates_forward(
             temporal_constraints[forward_step] if forward_step < len(temporal_constraints)
             else None
         )
-        # step_constraints = None
+
         candidates = (
             filter_trajectories_by_constraints(
                 new_candidates,
                 step_constraints,
-                use_route_contains=False
+                use_route_contains=True
             ) if step_constraints
             else new_candidates
         )
