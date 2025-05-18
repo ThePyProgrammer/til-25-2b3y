@@ -13,6 +13,8 @@ import layoutparser as lp
 from spellchecker import SpellChecker
 from spellwise import Levenshtein
 
+from shortcut import get_shortcut_answer
+
 
 detection_arch = [
     "db_resnet34",
@@ -36,31 +38,40 @@ recognition_arch = [
     "vitstr_base",
     "parseq",
 ]
-        
+
+
+def get_image_head(image, head_pct: float = 0.15):
+    h, w = image.shape[:2]
+    return image[:int(h * head_pct)]
+
 class OCRManager:
     def __init__(self):
         self.use_spellchecker = True
         self.max_edit_distance = 2
-        self.use_threshold = True # cleans bleedthrough
-        
+        self.use_threshold = True # whether to use cv to clean bleedthrough
+
+        # not the same as ^^
+        self.shortcut_threshold: Optional[int] = 80 # none for no shortcut
+        self.shortcut_lines: int = 2
+
         det_model = linknet_resnet18(pretrained=False, pretrained_backbone=False)
         reco_model = crnn_mobilenet_v3_small(pretrained=False, pretrained_backbone=False)
-        
+
         det_params = torch.load("models/linknet_resnet18_ft.pt", map_location="cpu")
         det_model.load_state_dict(det_params)
-        
+
         reco_params = torch.load("models/crnn_mobilenet_v3_small_ft.pt", map_location="cpu")
         reco_model.load_state_dict(reco_params)
-        
+
         self.ocr_model = ocr_predictor(det_model, reco_model, pretrained=False).eval().cuda().half()
-        
+
         self.reranker: SpellChecker = SpellChecker()
         self.levenshtein: Levenshtein = Levenshtein()
         self.reranker.word_frequency.load_json("word_frequency.json")
         self.levenshtein.add_from_path("words.txt")
 
         self.spellcheck_cache: dict[str, str] = {}
-        
+
     def _preprocess_images(self, batch):
         """Apply dilation to enhance image if enabled"""
         output = []
@@ -78,14 +89,14 @@ class OCRManager:
                     cv2.THRESH_BINARY,
                 )[-1] == 1
 
-                gray_image = gray_image | mask 
+                gray_image = gray_image | mask
 
             normal_image = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2BGR)
 
             output.append(normal_image)
 
         return output
-    
+
     def _spellcheck(self, word: str) -> str:
         if self.use_spellchecker:
             correct = self.spellcheck_cache.get(word.lower(), None)
@@ -120,7 +131,7 @@ class OCRManager:
             return correct
         else:
             return word
-    
+
     def _join_words(self, words: list[str], keep_hyphen=True, use_spellcheck=True):
         joined = ""
         for word in words:
@@ -136,26 +147,12 @@ class OCRManager:
                 new = f"{word} "
             joined += new
         return joined.strip()
-    
-    @torch.no_grad()
-    def ocr(self, images: list[bytes]) -> list[str]:
-        """Performs OCR on an image of a document.
-        Args:
-            image: The image file in bytes.
-        Returns:
-            A string containing the text extracted from the image.
-        """
-        batch = DocumentFile.from_images(images)
-        
-        # batch = self._preprocess_images(batch)
-        
-        with torch.amp.autocast('cuda', enabled=torch.cuda.is_available(), dtype=torch.float16):
-            ocr_results = self.ocr_model(batch)
 
-        batch_text_blocks = []
+    def _postprocess_pages(self, pages: list, return_lines: bool = False):
+        batch_lines = []
         predictions = []
 
-        for idx, page in enumerate(ocr_results.pages):
+        for idx, page in enumerate(pages):
             text_blocks = []
 
             h, w = page.dimensions
@@ -188,11 +185,77 @@ class OCRManager:
             # Combine left and right blocks with ID assignments
             ordered_blocks = lp.Layout([b.set(id=idx) for idx, b in enumerate(left_blocks + right_blocks)])
 
-            batch_text_blocks.append(ordered_blocks)
-
             lines = [block.text for block in ordered_blocks]
-            prediction = self._join_words(lines, use_spellcheck=False, keep_hyphen=False)
 
+            batch_lines.append(lines)
+            
+            prediction = self._join_words(lines, use_spellcheck=False, keep_hyphen=False)
             predictions.append(prediction)
-        
-        return predictions
+
+        if return_lines:
+            return batch_lines
+        else:
+            return predictions
+
+    def _full_inference(self, batch: list):
+        with torch.amp.autocast('cuda', enabled=torch.cuda.is_available(), dtype=torch.float16):
+            preds = self.ocr_model(batch)
+
+        return self._postprocess_pages(preds.pages)
+
+    def _shortcut_inference(self, batch: list):
+        batch = [get_image_head(image) for image in batch]
+        with torch.amp.autocast('cuda', enabled=torch.cuda.is_available(), dtype=torch.float16):
+            preds = self.ocr_model(batch)
+
+        batch_lines = self._postprocess_pages(preds.pages, return_lines=True)
+        batch_output = []
+
+        for lines in batch_lines:
+            text = self._join_words(lines[:self.shortcut_lines], use_spellcheck=False, keep_hyphen=False)
+            has_shortcut, answer = get_shortcut_answer(text, self.shortcut_threshold)
+            batch_output.append((has_shortcut, answer))
+
+        return batch_output
+
+    @torch.no_grad()
+    def ocr(self, images: list[bytes]) -> list[str]:
+        """Performs OCR on an image of a document.
+        Args:
+            image: The image file in bytes.
+        Returns:
+            A string containing the text extracted from the image.
+        """
+        batch = DocumentFile.from_images(images)
+
+        if self.shortcut_threshold is not None:
+            answers = self._shortcut_inference(batch)
+
+            # Create the final results list (same length as input)
+            results = [""] * len(answers)
+
+            # Collect images that need full inference
+            need_full_inference = []
+            full_inference_indices = []
+
+            for i, (has_shortcut, answer) in enumerate(answers):
+                if has_shortcut:
+                    results[i] = answer
+                else:
+                    need_full_inference.append(batch[i])
+                    full_inference_indices.append(i)
+
+            # Run full inference only on images that need it
+            if need_full_inference:
+                preprocessed_images = self._preprocess_images(need_full_inference)
+                full_inference_results = self._full_inference(preprocessed_images)
+
+                # Add full inference results to the final results
+                for idx, result in zip(full_inference_indices, full_inference_results):
+                    results[idx] = result
+
+            return results
+        else:
+            # If no shortcut threshold is set, run full inference on all images
+            preprocessed_images = self._preprocess_images(batch)
+            return self._full_inference(preprocessed_images)

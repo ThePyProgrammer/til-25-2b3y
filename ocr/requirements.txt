@@ -7,3 +7,6 @@ pillow==9.5.0
 
 pyspellchecker
 spellwise
+
+jiwer
+rapidfuzz
