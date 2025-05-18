@@ -27,9 +27,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Pre-download models during build
-COPY setup.py .
-RUN python setup.py
-RUN rm ./setup.py
+# COPY setup.py .
+# RUN python setup.py
+# RUN rm ./setup.py
 
 # Copy your source files
 COPY src/ .
