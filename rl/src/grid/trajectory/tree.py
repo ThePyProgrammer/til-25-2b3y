@@ -10,6 +10,7 @@ from .trajectory import Trajectory
 from .index import TrajectoryIndex
 from .constraints import Constraints, TrajectoryConstraints, TemporalTrajectoryConstraints
 from .utils import fast_forward_trajectories, expand_trajectories
+from .factory import create_trajectories_from_constraints
 
 from utils.profiler import start_profiling, stop_profiling
 
@@ -178,11 +179,11 @@ class TrajectoryTree:
         self._clean_up_trajectories()
 
         if len(self.trajectories) == 0:
-            self.trajectories = Trajectory.from_points(
+            self.trajectories = create_trajectories_from_constraints(
                 self.roots,
-                self.temporal_constraints[-1].route.contains,
-                registry=self.registry,
-                budget=self.num_step,
+                self.temporal_constraints,
+                self.num_step,
+                self.registry,
             )
 
             print(f"Fit {len(self.trajectories)} trajectories to visited points.")
@@ -193,6 +194,7 @@ class TrajectoryTree:
                 self.temporal_constraints,
                 self.registry
             )
+            print(self.trajectories)
             self.edge_trajectories = self.trajectories.copy()
 
     @property

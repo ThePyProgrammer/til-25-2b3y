@@ -105,7 +105,7 @@ def propagate_candidates_forward(
             filter_trajectories_by_constraints(
                 new_candidates,
                 step_constraints,
-                use_route_excludes=False
+                use_route_contains=False
             ) if step_constraints
             else new_candidates
         )
