@@ -99,36 +99,44 @@ class OCRManager:
 
     def _spellcheck(self, word: str) -> str:
         if self.use_spellchecker:
-            correct = self.spellcheck_cache.get(word.lower(), None)
+            # First, determine the capitalization pattern
+            is_lower = word.islower()
+            is_upper = word.isupper()
+            is_title = word.istitle() and not is_upper
+            
+            # Always use lowercase for lookup
+            lookup_word = word.lower()
+            correct = self.spellcheck_cache.get(lookup_word, None)
 
             if correct is None:
                 if word not in self.reranker:
                     suggestions = self.levenshtein.get_suggestions(
-                        word,
+                        lookup_word,
                         max_distance=self.max_edit_distance
                     )
-
                     if len(suggestions) > 0:
                         # Sort suggestions by distance
                         suggestions.sort(key=lambda x: x['distance'])
-
                         # Find all suggestions with the minimum distance
                         min_distance = suggestions[0]['distance']
                         best_suggestions = [s for s in suggestions if s['distance'] == min_distance]
-
                         # Rerank by word frequency
                         best_word = max(
                             best_suggestions,
                             key=lambda s: self.reranker.word_frequency.dictionary.get(s['word'], 0)
                         )['word']
-
                         correct = best_word
-
                 if correct is None:
-                    correct = word
-                self.spellcheck_cache[word.lower()] = correct
+                    correct = lookup_word
+                self.spellcheck_cache[lookup_word] = correct.lower()
 
-            return correct
+            # Apply the original capitalization pattern to the corrected word
+            if is_upper:
+                return correct.upper()
+            elif is_title:
+                return correct.capitalize()
+            else:  # is_lower or other patterns
+                return correct.lower()
         else:
             return word
 

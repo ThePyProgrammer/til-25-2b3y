@@ -1,3 +1,4 @@
+from functools import lru_cache
 from typing import Optional
 
 import numpy as np
@@ -7,6 +8,7 @@ from .answers import FIRST_LINES, WITH_ABSTRACT, WITHOUT_ABSTRACT
 from .transform import clean
 
 
+@lru_cache(maxsize=400)
 def get_shortcut_answer(text: str, threshold: float = 0.8) -> tuple[bool, Optional[str]]:
     text = clean(text)
     
