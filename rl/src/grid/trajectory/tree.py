@@ -9,6 +9,10 @@ from ..node import NodeRegistry, DirectionalNode
 from .trajectory import Trajectory
 from .index import TrajectoryIndex
 from .constraints import Constraints, TrajectoryConstraints, TemporalTrajectoryConstraints
+from .utils import fast_forward_trajectories, expand_trajectories
+from .factory import create_trajectories_from_constraints
+
+from utils.profiler import start_profiling, stop_profiling
 
 class TrajectoryTree:
     def __init__(
@@ -20,6 +24,7 @@ class TrajectoryTree:
         consider_direction: bool = True,
         regenerate_edge_threshold: int = 4,
         max_backtrack: int = 3,
+        num_samples: int = 2,  # Number of trajectory samples per endpoint
     ):
         """
         Initialize a TrajectoryTree with the agent's starting position and direction.
@@ -36,6 +41,7 @@ class TrajectoryTree:
         self.consider_direction = consider_direction
         self.regenerate_edge_threshold = regenerate_edge_threshold
         self.max_backtrack = max_backtrack
+        self.num_samples = num_samples
 
         self.num_step = 0
 
@@ -65,7 +71,7 @@ class TrajectoryTree:
             self._register_trajectory_in_index(trajectory)
 
         self.edge_trajectories: list[Trajectory] = self.trajectories.copy()
-        self.discard_edge_trajectories: list[Trajectory] = [] # [(step it was discarded, edge_trajectory), ...]
+        # self.discard_edge_trajectories: list[Trajectory] = [] # [(step it was discarded, edge_trajectory), ...]
 
         self.temporal_constraints: TemporalTrajectoryConstraints = TemporalTrajectoryConstraints()
 
@@ -78,8 +84,8 @@ class TrajectoryTree:
 
     def step(self) -> int:
         """
-        Expand all valid trajectories by one step, but only expanding the
-        longest and shortest trajectory that reaches each endpoint.
+        Expand all valid trajectories by one step, selecting n evenly spaced
+        trajectory samples for each endpoint.
 
         When consider_direction=True, trajectories are grouped by (position, direction).
         When consider_direction=False, trajectories are grouped only by position,
@@ -87,7 +93,8 @@ class TrajectoryTree:
 
         For each endpoint, we select:
         1. The shortest trajectory (fewest steps to reach that point)
-        2. The longest trajectory (if different from the shortest)
+        2. Up to (num_samples-2) evenly spaced trajectories
+        3. The longest trajectory (if different from the shortest)
 
         Periodically validates a random sample of trajectories to ensure
         invalid trajectories are properly identified.
@@ -101,69 +108,50 @@ class TrajectoryTree:
             # self._restart_from_discarded()
             return len(self.trajectories)
 
-        before_len = len(self.trajectories)
-
+        if len(self.edge_trajectories) < 16:
+            self.edge_trajectories = self.trajectories.copy()
         old_edge_trajectories = self.edge_trajectories
         print(f"Updating from {len(old_edge_trajectories)} trajectories")
         self.edge_trajectories = []  # Clear edge trajectories for this step
 
-        # Mapping of endpoint keys to trajectories
-        endpoint_to_trajectories = {}
-
-        # Group trajectories by their endpoints
+        # Mark all edge trajectories as discarded initially
         for traj in old_edge_trajectories:
-            # Skip invalid trajectories
-            if traj.to_delete:
-                continue
-
             traj.discarded = True
 
-            # Get key for this trajectory's endpoint
-            key = traj.get_endpoint_key(self.consider_direction)
-            if not key:
-                continue
+        # Use the enhanced expand_trajectories function to select and expand trajectories
+        expanded_trajectories = expand_trajectories(
+            old_edge_trajectories,
+            self.num_step,
+            max_backtrack=self.max_backtrack,
+            num_samples_per_trajectory=self.num_samples,
+            consider_direction=self.consider_direction
+        )
 
-            if key not in endpoint_to_trajectories:
-                endpoint_to_trajectories[key] = []
-            endpoint_to_trajectories[key].append(traj)
 
-        # For each endpoint, select the shortest and longest trajectories
-        selected_trajectories: list[Trajectory] = []
-        for key, trajectories in endpoint_to_trajectories.items():
-            # Sort by trajectory length (shorter first)
-            trajectories.sort(key=lambda t: len(t.route))
+        # Process the newly expanded trajectories
+        # new_trajectory_count = 0
+        # for traj in expanded_trajectories:
+            # Skip the original trajectories that were used for expansion
+            # if traj in old_edge_trajectories:
+                # traj.discarded = False
+                # continue
 
-            # Always select the shortest trajectory
-            shortest = trajectories[0]
-            shortest.discarded = False
-            selected_trajectories.append(shortest)
+            # Add this new trajectory
+            # new_trajectory_count += 1
 
-            # Also select the longest if different
-            if len(trajectories) > 1 and len(trajectories[-1].route) > len(shortest.route):
-                longest = trajectories[-1]
-                longest.discarded = False
-                selected_trajectories.append(longest)
+        self.trajectories.extend(expanded_trajectories)
+        self.edge_trajectories.extend(expanded_trajectories)
+        self._register_trajectory_in_index(expanded_trajectories)
 
-        # Add discarded trajectories to discard_edge_trajectories
-        for traj in old_edge_trajectories:
-            if traj.discarded:
-                self.discard_edge_trajectories.append(traj)
+        # # Add the remaining trajectories to discard_edge_trajectories
+        # for traj in old_edge_trajectories:
+        #     if traj.discarded:
+        #         self.discard_edge_trajectories.append(traj)
 
-        print(f"Total discard: {len(self.discard_edge_trajectories)}")
-        # print(f"Valid discarded: {len([0 for traj in self.discard_edge_trajectories if not traj.to_delete])}")
-
-        # Expand selected trajectories
-        for trajectory in selected_trajectories:
-            new_trajectories = trajectory.get_new_trajectories(self.num_step, max_backtrack=self.max_backtrack)
-            if new_trajectories:
-                # Add valid new trajectories
-                for new_traj in new_trajectories:
-                    self.trajectories.append(new_traj)
-                    self._register_trajectory_in_index(new_traj)
-                    self.edge_trajectories.append(new_traj)
+        # print(f"Total discard: {len(self.discard_edge_trajectories)}")
 
         # Return count of new trajectories
-        return len(self.trajectories) - before_len
+        return len(expanded_trajectories)
 
     def prune(self, information: list[tuple[Point, Tile]], seeking_scout: bool = True):
         """
@@ -176,12 +164,6 @@ class TrajectoryTree:
             information (list[tuple[Point, Tile]]): recently updated/observed tiles
             seeking_scout (bool): If True, look for scout agent. If False, look for guard agent.
         """
-        # Process agent sightings first (early exit)
-        agent_position = self._check_for_agent(information, seeking_scout)
-        if agent_position is not None:
-            self._reset_trajectories_for_agent(agent_position)
-            return
-
         # Track newly discovered ambiguous tiles
         self._track_ambiguous_tiles(information)
 
@@ -191,13 +173,30 @@ class TrajectoryTree:
         self._clean_up_trajectories()
 
         if len(self.trajectories) == 0:
-            self.trajectories = Trajectory.from_points(
+            self.trajectories = create_trajectories_from_constraints(
                 self.roots,
-                self.temporal_constraints[-1].route.contains,
-                registry=self.registry,
-                budget=self.num_step,
+                self.temporal_constraints,
+                self.num_step,
+                self.registry,
             )
+
+            print(f"Fit {len(self.trajectories)} trajectories to visited points.")
+
+            self.trajectories = fast_forward_trajectories(
+                self.trajectories,
+                self.num_step,
+                self.temporal_constraints,
+                self.registry
+            )
+
             self.edge_trajectories = self.trajectories.copy()
+
+        if len(self.trajectories) == 0:
+            # Process agent sightings first (early exit)
+            agent_position = self._check_for_agent(information, seeking_scout)
+            if agent_position is not None:
+                self._reset_trajectories_for_agent(agent_position)
+
 
     @property
     def probability_density(self) -> NDArray[np.float32]:
@@ -296,25 +295,72 @@ class TrajectoryTree:
         for traj in trajectories:
             traj.get_last_node()
 
-    def _register_trajectory_in_index(self, trajectory: Trajectory):
-        """Register a trajectory in the position index."""
-        if trajectory.to_delete:
-            return
+    def _register_trajectory_in_index(self, t: Trajectory | list[Trajectory]):
+        """Register a trajectory or list of trajectories in the position index."""
+        if isinstance(t, list):
+            # Handle list of trajectories
+            # Filter out trajectories marked for deletion
+            valid_trajectories = [traj for traj in t if not traj.to_delete]
 
-        for node in trajectory.nodes:
-            self.position_index.add(node.position, trajectory)
-            self.node_index.add(node, trajectory)
+            # We need to group trajectories by position to use the update method effectively
+            position_to_trajectories = {}
+            node_to_trajectories = {}
+            tail_position_to_trajectories = {}
 
-        self.tail_position_index.add(trajectory.tail.position, trajectory)
+            # First, collect trajectories by their positions
+            for trajectory in valid_trajectories:
+                for node in trajectory.nodes:
+                    position = node.position
+                    if position not in position_to_trajectories:
+                        position_to_trajectories[position] = []
+                    position_to_trajectories[position].append(trajectory)
 
-    def _unregister_trajectory_from_index(self, trajectory: Trajectory):
-        """Remove a trajectory from the position index."""
-        for node in trajectory.nodes:
-            self.position_index.remove(node.position, trajectory)
-            self.node_index.add(node, trajectory)
+                    if node not in node_to_trajectories:
+                        node_to_trajectories[node] = []
+                    node_to_trajectories[node].append(trajectory)
 
-        # delete from end_index too
-        self.tail_position_index.remove(trajectory.tail.position, trajectory)
+                tail_position = trajectory.tail.position
+                if tail_position not in tail_position_to_trajectories:
+                    tail_position_to_trajectories[tail_position] = []
+                tail_position_to_trajectories[tail_position].append(trajectory)
+
+            # Now use the update method to register trajectories in bulk
+            for position, trajectories in position_to_trajectories.items():
+                self.position_index.update(position, trajectories)
+
+            for node, trajectories in node_to_trajectories.items():
+                self.node_index.update(node, trajectories)
+
+            for position, trajectories in tail_position_to_trajectories.items():
+                self.tail_position_index.update(position, trajectories)
+        else:
+            # Handle single trajectory
+            trajectory = t
+            if not trajectory.to_delete:
+                # For a single trajectory, using add directly is simpler
+                for node in trajectory.nodes:
+                    self.position_index.add(node.position, trajectory)
+                    self.node_index.add(node, trajectory)
+                self.tail_position_index.add(trajectory.tail.position, trajectory)
+
+    def _unregister_trajectory_from_index(self, t: Trajectory | list[Trajectory]):
+        """Remove a trajectory or list of trajectories from the position index."""
+        if isinstance(t, list):
+            # Handle list of trajectories
+            for trajectory in t:
+                for node in trajectory.nodes:
+                    self.position_index.remove(node.position, trajectory)
+                    self.node_index.remove(node, trajectory)
+                # Delete from tail_position_index too
+                self.tail_position_index.remove(trajectory.tail.position, trajectory)
+        else:
+            # Handle single trajectory
+            trajectory = t
+            for node in trajectory.nodes:
+                self.position_index.remove(node.position, trajectory)
+                self.node_index.remove(node, trajectory)
+            # Delete from tail_position_index too
+            self.tail_position_index.remove(trajectory.tail.position, trajectory)
 
     def _clear_all_trajectories(self):
         """Clear all trajectories and reset the position index."""
@@ -390,8 +436,8 @@ class TrajectoryTree:
 
         for position, tile in information:
             # Skip any tiles that are in our ambiguous set
-            if position in self.ambiguous_tiles:
-                continue
+            # if position in self.ambiguous_tiles:
+            #     continue
 
             # Case 1: agent detected - only keep trajectories containing this position
             if tile.has_scout:
@@ -522,4 +568,4 @@ class TrajectoryTree:
             else:
                 valid_trajectories.append(traj)
         self.trajectories = valid_trajectories
-        self.discard_edge_trajectories = [traj for traj in self.discard_edge_trajectories if not traj.to_delete]
+        # self.discard_edge_trajectories = [traj for traj in self.discard_edge_trajectories if not traj.to_delete]

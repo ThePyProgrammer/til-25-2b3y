@@ -1,4 +1,6 @@
 from doctr.models import ocr_predictor
+from doctr.models.detection import linknet_resnet18
+# from doctr.models.recognition import 
 import layoutparser as lp
 
 
@@ -26,10 +28,11 @@ recognition_arch = [
 ]
 
 if __name__ == "__main__":
-    ocr_model = ocr_predictor(detection_arch[-3], recognition_arch[1], pretrained=True)
+    # ocr_model = ocr_predictor(detection_arch[3], recognition_arch[-2], pretrained=True)
+    det_model = linknet_resnet18(pretrained=True)
 
     lp_model = lp.models.Detectron2LayoutModel(
-                config_path ='lp://PubLayNet/faster_rcnn_R_50_FPN_3x/config', # In model catalog
-                label_map   = {0: "Text", 1: "Title"}, # In model`label_map`
-                extra_config=["MODEL.ROI_HEADS.SCORE_THRESH_TEST", 0.7] # Optional
-            )
+        config_path ='lp://PubLayNet/faster_rcnn_R_50_FPN_3x/config', # In model catalog
+        label_map   = {0: "Text", 1: "Title"}, # In model`label_map`
+        extra_config=["MODEL.ROI_HEADS.SCORE_THRESH_TEST", 0.7] # Optional
+    )

@@ -4,6 +4,12 @@ Your ASR challenge is to transcribe a noisy recording of speech.
 
 This Readme provides a brief overview of the interface format; see the Wiki for the full [challenge specifications](https://github.com/til-ai/til-25/wiki/Challenge-specifications).
 
+## Our Solution
+
+### Qualifiers
+
+- [NVidia NeMo Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2). That's all. (inference @ float16 and re-batching inputs to batch size 16)
+
 ## Input
 
 The input is sent via a POST request to the `/asr` route on port `5001`. It is a JSON document structured as such:

@@ -70,7 +70,14 @@ class TemporalTrajectoryConstraints:
         return self._temporal_constraints[step]
 
 
-def apply_constraints(trajectory: Trajectory, constraints: TrajectoryConstraints) -> bool:
+def apply_constraints(
+    trajectory: Trajectory,
+    constraints: TrajectoryConstraints,
+    use_route_excludes: bool = True,
+    use_route_contains: bool = True,
+    use_tail_excludes: bool = True,
+    use_tail_contains: bool = True,
+) -> bool:
     """
     Apply constraints to a trajectory and mark it for deletion if it violates any constraint.
 
@@ -85,33 +92,42 @@ def apply_constraints(trajectory: Trajectory, constraints: TrajectoryConstraints
         return True
 
     # Check route exclude constraints
-    for node in trajectory.nodes:
-        if node in constraints.route.excludes:
-            trajectory.prune()
-            return False
+    if use_route_excludes:
+        if constraints.route.excludes:
+            for node in trajectory.nodes:
+                if node in constraints.route.excludes:
+                    trajectory.prune()
+                    return False
 
     # Check route contain constraints
-    for node in constraints.route.contains:
-        if node not in trajectory.nodes:
+    if use_route_contains:
+        for node in constraints.route.contains:
+            if node not in trajectory.nodes:
+                trajectory.prune()
+                return False
+
+    # Check tail exclude constraints
+    if use_tail_excludes:
+        if trajectory.tail.position in constraints.tail.excludes:
             trajectory.prune()
             return False
 
-    # Check tail exclude constraints
-    if trajectory.tail.position in constraints.tail.excludes:
-        trajectory.prune()
-        return False
-
     # Check tail contain constraints
-    if constraints.tail.contains and trajectory.tail.position not in constraints.tail.contains:
-        trajectory.prune()
-        return False
+    if use_tail_contains:
+        if constraints.tail.contains and trajectory.tail.position not in constraints.tail.contains:
+            trajectory.prune()
+            return False
 
     return True
 
 
 def filter_trajectories_by_constraints(
     trajectories: list[Trajectory],
-    constraints: Optional[TrajectoryConstraints]
+    constraints: Optional[TrajectoryConstraints],
+    use_route_excludes: bool = True,
+    use_route_contains: bool = True,
+    use_tail_excludes: bool = True,
+    use_tail_contains: bool = True,
 ) -> list[Trajectory]:
     """
     Filter a list of trajectories based on the given constraints.
@@ -124,10 +140,17 @@ def filter_trajectories_by_constraints(
         list: Filtered list of trajectories that satisfy all constraints
     """
     if constraints:
-        valid_trajectories: List[Trajectory] = []
+        valid_trajectories: list[Trajectory] = []
 
         for traj in trajectories:
-            if apply_constraints(traj, constraints):
+            if apply_constraints(
+                traj,
+                constraints,
+                use_route_excludes=use_route_excludes,
+                use_route_contains=use_route_contains,
+                use_tail_excludes=use_tail_excludes,
+                use_tail_contains=use_tail_contains,
+            ):
                 valid_trajectories.append(traj)
 
         return valid_trajectories

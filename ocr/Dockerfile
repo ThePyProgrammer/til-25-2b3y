@@ -12,7 +12,6 @@ ENV PIP_ROOT_USER_ACTION=ignore
 WORKDIR /workspace
 
 RUN pip install torch torchvision torchaudio -U --index-url https://download.pytorch.org/whl/cu118
-RUN pip install git+https://github.com/facebookresearch/detectron2.git@v0.4#egg=detectron2
 RUN pip install python-doctr layoutparser
 
 # Install Detectron2 dependencies
@@ -27,9 +26,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Pre-download models during build
-COPY setup.py .
-RUN python setup.py
-RUN rm ./setup.py
+# COPY setup.py .
+# RUN python setup.py
+# RUN rm ./setup.py
 
 # Copy your source files
 COPY src/ .
