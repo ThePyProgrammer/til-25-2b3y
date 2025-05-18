@@ -80,7 +80,7 @@ class TrajectoryTree:
 
         # Flag to track if we've performed a reset (detected agent) yet
         self.has_reset = False
-
+        self.cannot_be_fit = False
 
     def step(self) -> int:
         """
@@ -164,21 +164,13 @@ class TrajectoryTree:
             information (list[tuple[Point, Tile]]): recently updated/observed tiles
             seeking_scout (bool): If True, look for scout agent. If False, look for guard agent.
         """
-        # Process agent sightings first (early exit)
-        agent_position = self._check_for_agent(information, seeking_scout)
-        if agent_position is not None:
-            self._reset_trajectories_for_agent(agent_position)
-            return
-
-        # Track newly discovered ambiguous tiles
-        self._track_ambiguous_tiles(information)
 
         if seeking_scout:
             self._prune_by_tile_content(information)
 
         self._clean_up_trajectories()
 
-        if len(self.trajectories) == 0:
+        if len(self.trajectories) == 0 and not self.cannot_be_fit:
             self.trajectories = create_trajectories_from_constraints(
                 self.roots,
                 self.temporal_constraints,
@@ -194,8 +186,16 @@ class TrajectoryTree:
                 self.temporal_constraints,
                 self.registry
             )
-            print(self.trajectories)
+
+            self._register_trajectory_in_index(self.trajectories)
             self.edge_trajectories = self.trajectories.copy()
+
+        if len(self.trajectories) == 0 or self.cannot_be_fit:
+            self.cannot_be_fit = True
+            agent_position = self._check_for_agent(information, seeking_scout)
+            if agent_position is not None:
+                self._reset_trajectories_for_agent(agent_position)
+
 
     @property
     def probability_density(self) -> NDArray[np.float32]:
@@ -365,6 +365,7 @@ class TrajectoryTree:
         """Clear all trajectories and reset the position index."""
         self.trajectories.clear()
         self.edge_trajectories.clear()
+        self.node_index.clear()
         self.position_index.clear()
         self.tail_position_index.clear()
 
@@ -380,47 +381,19 @@ class TrajectoryTree:
         Create trajectories that end with the agent's position.
         ._prune_by_tile_content() will have kept only trajectories ending in the agent's location, but that is not enough.
         """
-        # If this is not the first reset, mark all currently known empty tiles as ambiguous
-        if self.has_reset:
-            # Add all currently tracked empty/visited tiles to ambiguous_tiles
-            for trajectory in self.trajectories:
-                for node in trajectory.nodes:
-                    position = node.position
-                    if position != agent_position:  # Don't mark agent's current position as ambiguous
-                        self.ambiguous_tiles.add(position)
-        else:
-            # First reset - set the flag
-            self.has_reset = True
 
         # Clear existing trajectories and their index
-        self._clear_all_trajectories()
+        # self._clear_all_trajectories()
 
         # Create new trajectories at the agent's position, considering all possible directions
         for direction in Direction:
             root_node = self.registry.get_or_create_node(agent_position, direction)
             trajectory = Trajectory(root_node, self.num_step)
             self.trajectories.append(trajectory)
-            self._register_trajectory_in_index(trajectory)
 
         # Update edge trajectories
+        self._register_trajectory_in_index(self.trajectories)
         self.edge_trajectories = self.trajectories.copy()
-
-    def _track_ambiguous_tiles(self, information):
-        """Track newly discovered empty tiles as ambiguous if we've already had a reset."""
-        if not self.has_reset:
-            return  # Only track ambiguous tiles after the first reset
-
-        for position, tile in information:
-            if tile.is_empty:  # Newly discovered visited/empty tile
-                self.ambiguous_tiles.add(position)
-
-    def debug_ambiguous_tiles(self):
-        """Print debug information about ambiguous tiles."""
-        print(f"Has reset: {self.has_reset}")
-        print(f"Number of ambiguous tiles: {len(self.ambiguous_tiles)}")
-        if self.ambiguous_tiles:
-            print(f"Ambiguous tile positions: {sorted(self.ambiguous_tiles)}")
-        print(f"Number of trajectories: {len(self.trajectories)}")
 
     def _prune_by_tile_content(self, information: list[tuple[Point, Tile]]):
         """Prune trajectories based on tile content."""
@@ -434,10 +407,6 @@ class TrajectoryTree:
         )
 
         for position, tile in information:
-            # Skip any tiles that are in our ambiguous set
-            if position in self.ambiguous_tiles:
-                continue
-
             # Case 1: agent detected - only keep trajectories containing this position
             if tile.has_scout:
                 constraints.tail.contains.append(position)
@@ -445,7 +414,7 @@ class TrajectoryTree:
             if tile.is_visible and (tile.is_recon or tile.is_mission):
                 constraints.route.excludes.append(position)
             # Case 3: visited - only keep trajectories containing this position
-            if tile.is_empty and not self.has_reset:
+            if tile.is_visible and tile.is_empty:
                 constraints.route.contains.append(position)
             # Case 4: no agent - remove trajectories ending at this position
             if not tile.has_scout:
@@ -510,7 +479,7 @@ class TrajectoryTree:
         removed_trajectories = set(self.trajectories) - set(valid_trajectories)
         for traj in removed_trajectories:
             traj.prune()
-            # self._unregister_trajectory_from_index(traj)
+        # self._unregister_trajectory_from_index(list(removed_trajectories))
 
         self._destroy_trajectory_families()
         self.trajectories = valid_trajectories
