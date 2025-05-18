@@ -164,12 +164,6 @@ class TrajectoryTree:
             information (list[tuple[Point, Tile]]): recently updated/observed tiles
             seeking_scout (bool): If True, look for scout agent. If False, look for guard agent.
         """
-        # Process agent sightings first (early exit)
-        agent_position = self._check_for_agent(information, seeking_scout)
-        if agent_position is not None:
-            self._reset_trajectories_for_agent(agent_position)
-            return
-
         # Track newly discovered ambiguous tiles
         self._track_ambiguous_tiles(information)
 
@@ -196,6 +190,13 @@ class TrajectoryTree:
             )
             print(self.trajectories)
             self.edge_trajectories = self.trajectories.copy()
+
+        if len(self.trajectories) == 0:
+            # Process agent sightings first (early exit)
+            agent_position = self._check_for_agent(information, seeking_scout)
+            if agent_position is not None:
+                self._reset_trajectories_for_agent(agent_position)
+
 
     @property
     def probability_density(self) -> NDArray[np.float32]:
@@ -435,8 +436,8 @@ class TrajectoryTree:
 
         for position, tile in information:
             # Skip any tiles that are in our ambiguous set
-            if position in self.ambiguous_tiles:
-                continue
+            # if position in self.ambiguous_tiles:
+            #     continue
 
             # Case 1: agent detected - only keep trajectories containing this position
             if tile.has_scout:
