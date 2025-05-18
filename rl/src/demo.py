@@ -276,7 +276,6 @@ def create_video(frames, output_path, fps=5):
     # Write video file
     clip.write_videofile(output_path, codec="libx264", fps=fps)
     print(f"Video saved to {output_path} using MoviePy")
-    return
 
 def main(args):
     if args.profile:
@@ -303,13 +302,6 @@ def main(args):
     )
     # Reset the environment with seed
     env.reset(seed=seed)
-
-    # Seed the environment's action space once
-    try:
-        env.action_space.seed(seed)
-    except (AttributeError, TypeError):
-        # Some environments might not have this method or it might be structured differently
-        pass
 
     # Get guard agent based on guard number
     guards = [a for a in env.agents if a != env.scout]

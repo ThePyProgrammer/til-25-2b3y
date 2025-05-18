@@ -108,9 +108,8 @@ class TrajectoryTree:
             # self._restart_from_discarded()
             return len(self.trajectories)
 
-        # if len(self.edge_trajectories) < 16:
-        #     self.edge_trajectories = self.trajectories.copy()
-
+        if len(self.edge_trajectories) < 16:
+            self.edge_trajectories = self.trajectories.copy()
         old_edge_trajectories = self.edge_trajectories
         print(f"Updating from {len(old_edge_trajectories)} trajectories")
         self.edge_trajectories = []  # Clear edge trajectories for this step
@@ -128,9 +127,28 @@ class TrajectoryTree:
             consider_direction=self.consider_direction
         )
 
+
+        # Process the newly expanded trajectories
+        # new_trajectory_count = 0
+        # for traj in expanded_trajectories:
+            # Skip the original trajectories that were used for expansion
+            # if traj in old_edge_trajectories:
+                # traj.discarded = False
+                # continue
+
+            # Add this new trajectory
+            # new_trajectory_count += 1
+
         self.trajectories.extend(expanded_trajectories)
         self.edge_trajectories.extend(expanded_trajectories)
         self._register_trajectory_in_index(expanded_trajectories)
+
+        # # Add the remaining trajectories to discard_edge_trajectories
+        # for traj in old_edge_trajectories:
+        #     if traj.discarded:
+        #         self.discard_edge_trajectories.append(traj)
+
+        # print(f"Total discard: {len(self.discard_edge_trajectories)}")
 
         # Return count of new trajectories
         return len(expanded_trajectories)
@@ -170,7 +188,7 @@ class TrajectoryTree:
                 self.temporal_constraints,
                 self.registry
             )
-            print(self.trajectories)
+
             self.edge_trajectories = self.trajectories.copy()
 
         if len(self.trajectories) == 0:
@@ -348,7 +366,6 @@ class TrajectoryTree:
         """Clear all trajectories and reset the position index."""
         self.trajectories.clear()
         self.edge_trajectories.clear()
-        self.node_index.clear()
         self.position_index.clear()
         self.tail_position_index.clear()
 
@@ -384,9 +401,9 @@ class TrajectoryTree:
             root_node = self.registry.get_or_create_node(agent_position, direction)
             trajectory = Trajectory(root_node, self.num_step)
             self.trajectories.append(trajectory)
+            self._register_trajectory_in_index(trajectory)
 
         # Update edge trajectories
-        self._register_trajectory_in_index(self.trajectories)
         self.edge_trajectories = self.trajectories.copy()
 
     def _track_ambiguous_tiles(self, information):
@@ -418,6 +435,10 @@ class TrajectoryTree:
         )
 
         for position, tile in information:
+            # Skip any tiles that are in our ambiguous set
+            # if position in self.ambiguous_tiles:
+            #     continue
+
             # Case 1: agent detected - only keep trajectories containing this position
             if tile.has_scout:
                 constraints.tail.contains.append(position)

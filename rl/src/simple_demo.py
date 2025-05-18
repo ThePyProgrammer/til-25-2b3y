@@ -160,17 +160,11 @@ def create_video(frames, output_path, fps=5):
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             rgb_frames.append(rgb_frame)
 
-    # Try using MoviePy (preferred method)
-    try:
-        # Create clip from frames
-        clip = ImageSequenceClip(rgb_frames, fps=fps)
+    clip = ImageSequenceClip(rgb_frames, fps=fps)
 
-        # Write video file
-        clip.write_videofile(output_path, codec="libx264", fps=fps)
-        print(f"Video saved to {output_path} using MoviePy")
-        return
-    except Exception as e:
-        print(f"MoviePy approach failed with error: {e}. Trying fallback methods...")
+    # Write video file
+    clip.write_videofile(output_path, codec="libx264", fps=fps)
+    print(f"Video saved to {output_path} using MoviePy")
 
 def main(args):
     if args.profile:
@@ -202,16 +196,6 @@ def main(args):
     )
     # Reset the environment with seed
     env.reset(seed=seed)
-
-    # Create a numpy random generator with the same seed for action sampling
-    np_random = np.random.RandomState(seed)
-
-    # Seed the environment's action space once
-    try:
-        env.action_space.seed(seed)
-    except (AttributeError, TypeError):
-        # Some environments might not have this method or it might be structured differently
-        pass
 
     # Get guard agent based on guard number
     guards = [a for a in env.agents if a != env.scout]
