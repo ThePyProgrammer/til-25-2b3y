@@ -150,7 +150,7 @@ def main(args):
         shared_encoder=False,
     )
 
-    model.cuda()
+    model.to(device)
 
     if args.bfloat16:
         model.to(torch.bfloat16)
@@ -191,7 +191,8 @@ def main(args):
     # Experience collection buffer
     buffer = ExperienceBuffer()
     last_scout_step_info = None # Stores {S_t tensors, A_t, log_prob_t, V_t}
-    steps_since_saved = 0
+    steps_since_save = 0
+    episodes_since_update = 0
 
 
     # Outer loop for total timesteps
@@ -207,8 +208,6 @@ def main(args):
         buffer.clear()
         scout_reward = 0
 
-
-        episode_ended = False
         # Inner loop for one episode
         for agent in env.agent_iter():
             # Get observation, reward, etc. for the current agent's turn
@@ -220,7 +219,7 @@ def main(args):
             if termination or truncation:
                 reward = env.rewards[env.scout]
                 scout_reward += reward
-                episode_ended = True
+                episodes_since_update += 1
                 # If the scout had an unfinished step when another agent terminated or episode truncated,
                 # finalize the last scout step with assumed reward/done.
                 if last_scout_step_info is not None:
@@ -254,10 +253,6 @@ def main(args):
                     )
                     last_scout_step_info = None # Clear as step is finalized
 
-                    if termination or truncation:
-                        episode_ended = True
-                        break # End agent_iter loop
-
                 # --- Collect state, action, log_prob, value for the current step (S_t, A_t, log_prob_t, V_t) ---
                 # The current 'observation' is S_t
                 # Use scout's map to get tensor representation
@@ -268,7 +263,7 @@ def main(args):
                 if args.bfloat16:
                     map_input = map_input.to(torch.bfloat16)
 
-                map_input = map_input.cuda()
+                map_input = map_input.to(device)
 
                 # Get action (A_t), log_prob, value (V(S_t)) from the model
                 with torch.no_grad():
@@ -285,7 +280,7 @@ def main(args):
                 # Perform the action A_t
                 env.step(action.item())
                 timesteps_elapsed += 1
-                steps_since_saved += 1
+                steps_since_save += 1
 
                 # The PPO update will happen after the agent_iter loop breaks.
                 if timesteps_elapsed >= args.timesteps:
@@ -329,25 +324,14 @@ def main(args):
             if timesteps_elapsed >= args.timesteps:
                 break # End agent_iter loop
 
-
-            # After agent_iter loop finishes (episode ended or truncated)
-            # Finalize the very last step taken by the scout if it wasn't finalized by termination within the loop.
-            # if last_scout_step_info is not None:
-            #     buffer.add(
-            #         map_input=last_scout_step_info['map_input'],
-            #         action=last_scout_step_info['action'],
-            #         log_prob=last_scout_step_info['log_prob'],
-            #         value=last_scout_step_info['value'],
-            #         reward=reward,
-            #         done=True # Episode ended
-            #     )
-            #     last_scout_step_info = None # Clear for next episode
-
+        print(f"Collected {len(buffer)} scout steps in this episode with a reward of {scout_reward}.")
 
         # --- PPO Update ---
         # Perform training update if we have collected any scout steps in this episode
-        if not buffer.is_empty(): # Check if buffer has data
-            print(f"Collected {len(buffer)} scout steps in this episode with a reward of {scout_reward}. Performing PPO update.")
+        if not buffer.is_empty() and episodes_since_update >= args.episodes_per_update: # Check if buffer has data
+            episodes_since_update = 0
+
+            print("Performing PPO update.")
 
             # Get batch from buffer
             training_data = buffer.get_batch()
@@ -373,15 +357,9 @@ def main(args):
             # Clear batch after training (or collect multiple episodes before training)
             buffer.clear()
 
-            # Perform evaluation periodically
-            EVAL_INTERVAL = 50000 # Evaluate every 50,000 timesteps (example interval)
-            if timesteps_elapsed > start_timesteps and timesteps_elapsed % EVAL_INTERVAL < len(training_data) or timesteps_elapsed >= args.timesteps:
-                evaluate_policy(model, env) # Run evaluation
-
-
             # Save checkpoint
-            if steps_since_saved > args.save_interval or timesteps_elapsed >= args.timesteps:
-                steps_since_saved = 0
+            if steps_since_save > args.save_interval or timesteps_elapsed >= args.timesteps:
+                steps_since_save = 0
                 checkpoint_path = os.path.join(args.save_dir, 'latest.pt')
                 torch.save({
                     'timesteps_elapsed': timesteps_elapsed,
@@ -393,140 +371,6 @@ def main(args):
 
     print("Training finished.")
     env.close()
-
-def evaluate_policy(model: torch.nn.Module, env, num_episodes: int = 10, seed: Optional[int] = None):
-    """
-    Evaluates the policy for a given number of episodes.
-
-    Args:
-        model: The PPOActorCritic model.
-        env: The environment.
-        num_episodes: Number of episodes to run for evaluation.
-        seed: Optional seed for evaluation episodes.
-
-    Returns:
-        Average cumulative reward over the evaluation episodes.
-    """
-    # Set model to evaluation mode
-    model.eval()
-
-    total_rewards = []
-
-    print(f"\nStarting policy evaluation for {num_episodes} episodes...")
-
-    for episode in range(num_episodes):
-        # Reset environment for evaluation episode
-        # Use a separate seed or offset the training seed
-        current_seed = seed if seed is not None else 1000000 + episode # Use high seed to avoid overlap
-        env.reset(seed=current_seed)
-
-        agents = init_agents(env)
-
-        episode_reward = 0
-        episode_ended = False
-
-        # Iterate through agents in the episode
-        for agent in env.agent_iter():
-            observation, reward, termination, truncation, info = env.last()
-
-            if termination or truncation:
-                episode_ended = True
-                break
-
-            # Only get action for scout or guards
-            if agent == env.scout:
-                # Update scout's map and get tensor
-                agents['maps']['scout'](observation)
-                map_input = agents['maps']['scout'].get_tensor().unsqueeze(0)
-
-                # Ensure tensor dtype matches model dtype (bfloat16 if enabled)
-                # Assuming model.dtype is the correct dtype for inputs
-                model_dtype = next(model.parameters()).dtype
-                if map_input.dtype != model_dtype:
-                     map_input = map_input.to(model_dtype)
-
-
-                # Get action from the model using greedy policy (no gradients)
-                with torch.no_grad():
-                     # Use greedy=True for evaluation
-                     action, _, _, _ = model.get_action_and_value(map_input, greedy=True)
-
-                # Step environment with scout action
-                env.step(action.item())
-                # Accumulate reward received by the scout (reward is from previous step)
-                # The reward here is for the action taken in the *previous* scout turn
-                # Need to correctly attribute reward to the step that earned it.
-                # For simplicity in evaluation, let's accumulate the reward from env.last()
-                # This might not be perfectly aligned with the action that earned it,
-                # but gives a general sense of performance.
-                # A more precise way involves storing reward with the state it resulted from.
-                # Let's use the reward from env.last() for the agent whose turn it is.
-                # We need the reward *given to the scout* after *its* action.
-                # This reward appears in env.last() *on the next agent's turn*.
-                # A simpler approach for evaluation is to just sum up all rewards received by the scout
-                # throughout the episode. However, the pettingzoo API makes this tricky per agent within the loop.
-                # The total episode reward is probably the most straightforward metric.
-                # Let's assume the 'reward' from env.last() when it's the scout's turn is the reward
-                # the scout received for its *previous* action.
-                episode_reward += reward # Accumulate reward for the scout
-
-
-            elif agent in guard_maps: # It's a guard agent
-                # Update the guard's map with its observation
-                guard_maps[agent](observation)
-
-                # Get location and direction from observation
-                location = observation.get('location')
-                direction = observation.get('direction')
-
-                # Use the guard's pathfinder to determine action
-                action = 0 # Default action if pathfinder fails
-
-                if location is not None and direction is not None:
-                    try:
-                        action = int(guard_pathfinders[agent].get_optimal_action(
-                            Point(location[0], location[1]),
-                            Direction(direction)
-                        ))
-                    except Exception as e:
-                        print(f"Error getting action for guard {agent} during evaluation: {e}")
-                        action = env.action_space(agent).sample() # Fallback to random
-
-                # Perform the action
-                env.step(action)
-
-            else: # Other agents (if any)
-                # Take a random action for other agents
-                random_action = env.action_space(agent).sample()
-                env.step(random_action)
-
-            # Note: Cumulative reward calculation might be tricky with multi-agent turns.
-            # The pettingzoo docs mention `env.rewards` to get total rewards per agent at the end.
-            # Let's use the total episode reward for the scout from `env.rewards` after the loop.
-
-
-        # After the episode loop, get the scout's total reward for this episode
-        if env.scout in env.rewards:
-            episode_reward = env.rewards[env.scout]
-            total_rewards.append(episode_reward)
-        else:
-            # Warning if scout reward not tracked or available.
-            print(f"Warning: Could not retrieve total reward for scout in episode {episode}.")
-            pass
-
-
-        print(f" Episode {episode + 1}/{num_episodes} finished with reward: {episode_reward}")
-
-
-    # Calculate average reward
-    avg_reward = sum(total_rewards) / len(total_rewards) if total_rewards else 0.0
-
-    print(f"Evaluation finished. Average reward over {num_episodes} episodes: {avg_reward:.4f}\n")
-
-    # Set model back to training mode
-    model.train()
-
-    return avg_reward
 
 
 if __name__ == "__main__":

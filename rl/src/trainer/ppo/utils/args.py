@@ -13,6 +13,7 @@ def parse_args():
     parser.add_argument('--epochs', type=int, default=10, help='number of PPO epochs per update')
     parser.add_argument('--timesteps', type=int, default=1_000_000, help='total timesteps to train')
     parser.add_argument('--batch_size', type=int, default=64, help='mini-batch size for PPO update')
+    parser.add_argument('--episodes_per_update', type=int, default=1, help='number of episodes to collect before PPO update')
 
     parser.add_argument('--lr', type=float, default=3e-4, help='learning rate')
     parser.add_argument('--optim', type=str, default='adam', choices=['sgd', 'adam', 'adamw'], help='optimizer')

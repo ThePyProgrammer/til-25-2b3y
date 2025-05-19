@@ -3,8 +3,6 @@ import torch.nn.functional as F
 import torch.optim as optim
 from typing import Dict, Any
 
-# Assuming PPOActorCritic, etc. are available via sys.path or passed in if needed
-# from networks.ppo import PPOActorCritic
 
 def calculate_gae_returns(rewards: torch.Tensor, values: torch.Tensor, dones: torch.Tensor, gamma: float, gae_lambda: float) -> tuple[torch.Tensor, torch.Tensor]:
     """
