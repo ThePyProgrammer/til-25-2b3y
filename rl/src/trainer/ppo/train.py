@@ -16,6 +16,8 @@ from networks.ppo import PPOActorCritic
 from grid.map import Map
 from grid.utils import Point
 from til_environment import gridworld
+from til_environment.types import RewardNames
+
 from trainer.ppo.utils.args import parse_args # Import parse_args
 
 from grid.map import Map
@@ -27,6 +29,17 @@ from grid.viz import MapVisualizer # May not be needed for training, but keep fo
 from trainer.ppo.utils.buffer import ExperienceBuffer
 from trainer.ppo.utils.ppo_update import ppo_update # Import the ppo_update function
 from trainer.ppo.utils.scheduler import create_scheduler # Import create_scheduler
+
+
+NEW_REWARDS_DICT = {
+    RewardNames.GUARD_CAPTURES: 1,
+    RewardNames.SCOUT_CAPTURED: -1,
+    RewardNames.SCOUT_RECON: 0.02,
+    RewardNames.SCOUT_MISSION: 0.1,
+    RewardNames.WALL_COLLISION: -0.05,
+    RewardNames.SCOUT_TRUNCATION: 1,
+    RewardNames.STATIONARY_PENALTY: -0.05
+}
 
 
 def init_agents(env, num_guards):
@@ -82,13 +95,13 @@ def main(args):
     if args.bfloat16:
         torch.set_default_dtype(torch.bfloat16)
         print("Using bfloat16 for training.")
-
-
+    
     env = gridworld.env(
         env_wrappers=[],  # clear out default env wrappers
         render_mode="human" if args.render else None,  # Render the map if requested
         debug=False,  # Enable debug mode
         novice=False,  # Use same map layout every time (for Novice teams only)
+        rewards_dict=NEW_REWARDS_DICT
     )
     # Reset the environment with seed
     env.reset(seed=args.seed)
@@ -200,20 +213,22 @@ def main(args):
             # This observation is the state *before* this agent acts.
             # reward/term/trunc are for this agent from the *previous* step.
             observation, reward, termination, truncation, info = env.last()
-
+            
             # Check if the current agent is done. If so, episode ends for all in this simplified setup.
             if termination or truncation:
+                reward = env.rewards[env.scout]
+                scout_reward += reward
                 episode_ended = True
                 # If the scout had an unfinished step when another agent terminated or episode truncated,
                 # finalize the last scout step with assumed reward/done.
                 if last_scout_step_info is not None:
-                    scout_reward += -50
+                    scout_reward += scout_reward
                     buffer.add(
                         map_input=last_scout_step_info['map_input'],
                         action=last_scout_step_info['action'],
                         log_prob=last_scout_step_info['log_prob'],
                         value=last_scout_step_info['value'],
-                        reward=-50.0 / 100,
+                        reward=reward,
                         done=True # Episode ended
                     )
                     last_scout_step_info = None # Clear for next episode
@@ -233,7 +248,7 @@ def main(args):
                         action=last_scout_step_info['action'],
                         log_prob=last_scout_step_info['log_prob'],
                         value=last_scout_step_info['value'],
-                        reward=float(reward) / 100, # Reward for the step that ended just before this turn
+                        reward=reward, # Reward for the step that ended just before this turn
                         done=termination or truncation # Done for the step that ended just before this turn
                     )
                     last_scout_step_info = None # Clear as step is finalized
@@ -363,7 +378,7 @@ def main(args):
 
 
             # Save checkpoint
-            if timesteps_elapsed % 10000 == 0 or timesteps_elapsed >= args.timesteps:
+            if timesteps_elapsed % 5000 == 0 or timesteps_elapsed >= args.timesteps:
                 checkpoint_path = os.path.join(args.save_dir, 'latest.pt')
                 torch.save({
                     'timesteps_elapsed': timesteps_elapsed,
