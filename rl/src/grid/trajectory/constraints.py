@@ -3,6 +3,7 @@ from typing import Optional
 
 from ..utils import Point
 from .trajectory import Trajectory  # Importing Trajectory for type annotations
+from .index import TrajectoryIndex
 
 
 @dataclass
@@ -95,14 +96,14 @@ def apply_constraints(
     if use_route_excludes:
         if constraints.route.excludes:
             for node in trajectory.nodes:
-                if node in constraints.route.excludes:
+                if node.position in constraints.route.excludes:
                     trajectory.prune()
                     return False
 
     # Check route contain constraints
     if use_route_contains:
-        for node in constraints.route.contains:
-            if node not in trajectory.nodes:
+        for point in constraints.route.contains:
+            if point not in trajectory.position_cache:
                 trajectory.prune()
                 return False
 
@@ -121,6 +122,115 @@ def apply_constraints(
     return True
 
 
+def build_position_indices_from_trajectories(trajectories: list[Trajectory]):
+    """
+    Build indices for trajectory positions and tail positions for efficient constraint filtering.
+
+    Args:
+        trajectories: List of trajectories to index
+    
+    Returns:
+        tuple: (position_index, tail_position_index)
+            - position_index: Maps positions to trajectories that contain that position
+            - tail_position_index: Maps positions to trajectories with tails at that position
+    """
+    position_index = TrajectoryIndex()
+    tail_position_index = TrajectoryIndex()
+
+    for traj in trajectories:
+        for node in traj.nodes:
+            position_index.add(node.position, traj)
+        tail_position_index.add(traj.tail.position, traj)
+    
+    return position_index, tail_position_index
+
+
+def _apply_route_exclude_constraints(
+    candidates: set[Trajectory],
+    position_index: TrajectoryIndex,
+    exclude_points: list[Point]
+) -> None:
+    """Apply route exclude constraints to the candidates."""
+    for excluded_point in exclude_points:
+        if excluded_point in position_index:
+            # Remove all trajectories that contain this excluded point
+            for traj in position_index[excluded_point]:
+                candidates.discard(traj)
+                traj.prune()  # Mark for deletion
+
+
+def _apply_route_contain_constraints(
+    candidates: set[Trajectory],
+    position_index: TrajectoryIndex,
+    contain_points: list[Point]
+) -> bool:
+    """
+    Apply route contain constraints to the candidates.
+    Returns False if all trajectories fail, True otherwise.
+    """
+    for required_point in contain_points:
+        if required_point not in position_index:
+            # If a required point isn't in any trajectory, all trajectories fail
+            for traj in candidates.copy():
+                traj.prune()
+            return False
+        
+        # Keep only trajectories that contain this required point
+        have_point = set(position_index[required_point])
+        for traj in candidates.copy():
+            if traj not in have_point:
+                candidates.discard(traj)
+                traj.prune()
+    
+    return True
+
+
+def _apply_tail_exclude_constraints(
+    candidates: set[Trajectory],
+    tail_position_index: TrajectoryIndex,
+    exclude_points: list[Point]
+) -> None:
+    """Apply tail exclude constraints to the candidates."""
+    for excluded_tail_point in exclude_points:
+        if excluded_tail_point in tail_position_index:
+            # Remove all trajectories with tail at this excluded point
+            for traj in tail_position_index[excluded_tail_point]:
+                candidates.discard(traj)
+                traj.prune()
+
+
+def _apply_tail_contain_constraints(
+    candidates: set[Trajectory],
+    tail_position_index: TrajectoryIndex,
+    contain_points: list[Point]
+) -> bool:
+    """
+    Apply tail contain constraints to the candidates.
+    Returns False if all trajectories fail, True otherwise.
+    """
+    if not contain_points:
+        return True
+        
+    valid_tails = set()
+    for required_tail_point in contain_points:
+        if required_tail_point in tail_position_index:
+            valid_tails.update(tail_position_index[required_tail_point])
+    
+    if not valid_tails:
+        # If there are contain constraints but no valid tails, all trajectories fail
+        for traj in candidates.copy():
+            traj.prune()
+        return False
+    
+    # Keep only trajectories with valid tail positions
+    for traj in candidates.copy():
+        if traj not in valid_tails:
+            candidates.discard(traj)
+            traj.prune()
+    
+    return True
+
+
 def filter_trajectories_by_constraints(
     trajectories: list[Trajectory],
     constraints: Optional[TrajectoryConstraints],
@@ -135,24 +245,36 @@ def filter_trajectories_by_constraints(
     Args:
         trajectories: List of trajectories to filter
         constraints: Constraints to apply
+        use_route_excludes: Whether to apply route exclude constraints
+        use_route_contains: Whether to apply route contain constraints
+        use_tail_excludes: Whether to apply tail exclude constraints
+        use_tail_contains: Whether to apply tail contain constraints
 
     Returns:
         list: Filtered list of trajectories that satisfy all constraints
     """
-    if constraints:
-        valid_trajectories: list[Trajectory] = []
-
-        for traj in trajectories:
-            if apply_constraints(
-                traj,
-                constraints,
-                use_route_excludes=use_route_excludes,
-                use_route_contains=use_route_contains,
-                use_tail_excludes=use_tail_excludes,
-                use_tail_contains=use_tail_contains,
-            ):
-                valid_trajectories.append(traj)
-
-        return valid_trajectories
-    else:
+    if not constraints:
         return trajectories
+    
+    # Build indices for efficient lookup
+    position_index, tail_position_index = build_position_indices_from_trajectories(trajectories)
+    
+    # Start with all trajectories as potential candidates
+    candidates = set(trajectories)
+    
+    # Apply constraints in order
+    if use_route_excludes and constraints.route.excludes:
+        _apply_route_exclude_constraints(candidates, position_index, constraints.route.excludes)
+    
+    if use_route_contains and constraints.route.contains:
+        if not _apply_route_contain_constraints(candidates, position_index, constraints.route.contains):
+            return []
+    
+    if use_tail_excludes and constraints.tail.excludes:
+        _apply_tail_exclude_constraints(candidates, tail_position_index, constraints.tail.excludes)
+    
+    if use_tail_contains and constraints.tail.contains:
+        if not _apply_tail_contain_constraints(candidates, tail_position_index, constraints.tail.contains):
+            return []
+    
+    return list(candidates)

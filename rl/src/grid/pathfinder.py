@@ -44,6 +44,7 @@ class Pathfinder:
         direction: Direction,
         tree_index: int = 0,
         destination: Optional[Point] = None,
+        is_guard: bool = True
     ) -> Action:
         """
         Get the optimal action to take from the current position and direction.
@@ -57,6 +58,7 @@ class Pathfinder:
             direction: Current direction the agent is facing
             tree_index: Index of the trajectory tree to use
             destination: Path find to some point instead of using the tree
+            is_guard: Whether the agent is a guard (will avoid other guards if True)
 
         Returns:
             Action: The optimal action to take
@@ -71,6 +73,16 @@ class Pathfinder:
         else:
             raise TypeError(f"destination should be of type Optional[Point] not {type(destination)}")
 
+        # Get guard positions if this is a guard agent
+        self.guard_positions = []
+        if is_guard:
+            guards_map = self.map.get_guards()
+            for y in range(self.map.size):
+                for x in range(self.map.size):
+                    # Add guard position to avoid list, excluding current position
+                    if guards_map[y, x] and not (x == position.x and y == position.y):
+                        self.guard_positions.append(Point(x, y))
+
         # Get the current node from the registry
         start_node = self.registry.get_or_create_node(position, direction)
 
@@ -84,6 +96,10 @@ class Pathfinder:
             for action in Action:
                 if action in start_node.children:
                     child_node = start_node.children[action]
+                    # Skip actions that would lead to guard positions
+                    if self.guard_positions:
+                        if self._is_blocked_by_guard(child_node.position):
+                            continue
                     candidate_actions.append((action, child_node))
 
             if candidate_actions:
@@ -108,6 +124,10 @@ class Pathfinder:
             for action in Action:
                 if action in start_node.children:
                     child_node = start_node.children[action]
+                    # Skip actions that would lead to guard positions
+                    if self.guard_positions:
+                        if self._is_blocked_by_guard(child_node.position):
+                            continue
                     candidate_actions.append((action, child_node))
 
             if candidate_actions:
@@ -135,8 +155,28 @@ class Pathfinder:
         # Return a valid action if possible
         for action in Action:
             if action in node.children:
+                # Skip actions that would lead to guard positions
+                if self.guard_positions:
+                    child_node = node.children[action]
+                    if self._is_blocked_by_guard(child_node.position):
+                        continue
                 return action
         return Action.STAY  # Default if no valid actions
+
+    def _is_blocked_by_guard(self, position: Point) -> bool:
+        """
+        Check if a position is blocked by a guard.
+
+        Args:
+            position: The position to check
+
+        Returns:
+            bool: True if the position is blocked, False otherwise
+        """
+        for guard_pos in self.guard_positions:
+            if position.x == guard_pos.x and position.y == guard_pos.y:
+                return True
+        return False
 
     def _find_paths_to_rewards(
         self,
@@ -145,6 +185,7 @@ class Pathfinder:
     ) -> dict[Point, tuple[DirectionalNode, int, Action]]:
         """
         Uses Dijkstra's algorithm to find shortest paths to all reward positions.
+        Avoids paths that would lead to guard positions if the agent is a guard.
 
         Returns:
             A dictionary mapping reward positions to (node, distance, first_action)
@@ -159,11 +200,22 @@ class Pathfinder:
                 if (node := self.registry.get_or_create_node(point, direction)) is not None:
                     goal_nodes.append(node)
 
+        # Custom neighbor function that avoids guard positions
+        def get_neighbors_avoiding_guards(node):
+            neighbors = get_node_neighbors(node)
+            # Filter out neighbors that would move to a guard position
+            if self.guard_positions:
+                neighbors = {
+                    action: neighbor for action, neighbor in neighbors.items()
+                    if not self._is_blocked_by_guard(neighbor.position)
+                }
+            return neighbors
+
         # Find shortest paths to all goals
         path_results = find_shortest_paths(
             start_node=start_node,
             goal_nodes=goal_nodes,
-            get_neighbors=get_node_neighbors,
+            get_neighbors=get_neighbors_avoiding_guards,
             node_hash=hash
         )
 
@@ -202,6 +254,7 @@ class Pathfinder:
         then considering the reward/distance ratio.
 
         If use_viewcone is False, only the path efficiency (reward/distance) is considered.
+        When the agent is a guard, also avoids actions that would lead to other guard positions.
         """
         # First, evaluate all candidate actions
         scored_actions = []
@@ -212,6 +265,12 @@ class Pathfinder:
 
                 if first_action is None:
                     continue
+
+                # Skip actions that would lead to guard positions
+                if hasattr(self, 'guard_positions') and self.guard_positions and first_action in node.children:
+                    next_node = node.children[first_action]
+                    if self._is_blocked_by_guard(next_node.position):
+                        continue
 
                 # Calculate path efficiency score
                 if distance == 0:

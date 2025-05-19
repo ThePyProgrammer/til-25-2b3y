@@ -134,6 +134,7 @@ class Map:
             self._update_node_connections(position, tile)
 
         for tree in self.trees:
+            # tree.prune(observed_cells, before_step=True)
             tree.step()
             tree.prune(observed_cells)
 
@@ -198,6 +199,24 @@ class Map:
                     guards[y, x] = tile.has_guard
 
         return scouts, guards
+
+    def get_guards(self):
+        """
+        Extract guard information from the map.
+
+        Returns:
+            tuple: Two arrays of shape (size, size) for guards.
+        """
+        guards = np.zeros((self.size, self.size), dtype=bool)
+
+        for y in range(self.size):
+            for x in range(self.size):
+                if self.viewed[y, x]:
+                    # Use Tile utility to extract agent information
+                    tile = Tile(self.map[y, x])
+                    guards[y, x] = tile.has_guard
+
+        return guards
 
     def get_visited(self):
         """
