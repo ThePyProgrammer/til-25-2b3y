@@ -115,7 +115,7 @@ class PPOActorCritic(nn.Module):
         self,
         action_dim: int,
         map_size: int = 16,
-        channels: int = 12,
+        channels: int = 14,
         encoder_type: str = "large",
         embedding_dim: int = 256,
         actor_hidden_dims: list[int] = [256],

@@ -2,6 +2,7 @@ from typing import Optional
 
 import numpy as np
 import heapq
+import torch
 
 from .utils import (
     Direction,
@@ -76,8 +77,8 @@ class Map:
             Updated map
         """
         viewcone = observation['viewcone']
-        direction = observation['direction']
-        agent_loc = observation['location']
+        self.direction = observation['direction']
+        self.agent_loc = observation['location']
 
         # Increment step counter
         self.step_counter += 1
@@ -97,7 +98,7 @@ class Map:
                 # Convert viewcone coordinates to world coordinates
                 # Agent is at position (2, 2) in the viewcone
                 view_coord = np.array([i - 2, j - 2])  # Offset from agent position in viewcone
-                world_coord = view_to_world(agent_loc, direction, view_coord)
+                world_coord = view_to_world(self.agent_loc, self.direction, view_coord)
 
                 # Convert coordinates to integers to use as array indices
                 x, y = int(world_coord[0]), int(world_coord[1])
@@ -105,7 +106,7 @@ class Map:
                 # Check if coordinates are within bounds
                 if (0 <= x < self.size and 0 <= y < self.size):
                     # Create a Tile instance and rotate its walls to maintain global orientation
-                    rotated_tile_value = rotate_wall_bits(tile_value, direction)
+                    rotated_tile_value = rotate_wall_bits(tile_value, self.direction)
 
                     # Clear agent bits when processing the agent's own position in viewcone
                     if i == 2 and j == 2:
@@ -218,11 +219,11 @@ class Map:
         """
         # For cells that have never been updated (last_updated is 0),
         # we'll use a large value to indicate "not updated"
-        result = np.ones((self.size, self.size), dtype=np.int32) * (self.step_counter + 1)
+        result = np.ones((self.size, self.size), dtype=np.int32) * (self.step_counter)
 
         # For visited cells, calculate the actual time difference
         mask = self.last_updated > 0
-        result[mask] = self.step_counter - self.last_updated[mask]
+        result[mask] = result[mask] - self.last_updated[mask]
 
         return result
 
@@ -346,3 +347,78 @@ class Map:
         self.trees.append(tree)
 
         return tree
+
+    def get_tensor(self) -> torch.Tensor:
+        """
+        Returns a tensor representation of the map with multiple channels
+
+        Args:
+            observation: Optional dictionary containing agent's current state.
+                         Should include 'location' and 'direction' keys.
+
+        Returns:
+            torch.Tensor: A tensor of shape (14, 16, 16) containing:
+                - Channel 0: no_vision (0/1)
+                - Channel 1: empty tiles (0/1)
+                - Channel 2: recon tiles (0/1)
+                - Channel 3: mission tiles (0/1)
+                - Channel 4: scout (0/1)
+                - Channel 5: guard (0/1)
+                - Channel 6: top_wall (0/1)
+                - Channel 7: bottom_wall (0/1)
+                - Channel 8: left_wall (0/1)
+                - Channel 9: right_wall (0/1)
+                - Channel 10: time_since_updated (0-1)
+                - Channel 11: is_here (0/1) for directions
+                - Channel 12: step (0-1)
+                - Channel 13: direction (0/1/2/3)
+        """
+        # Initialize tensor with zeros
+        tensor = torch.zeros((14, self.size, self.size), dtype=torch.float32)
+
+        # Channel 0: no_vision (inverse of viewed)
+        tensor[0] = torch.tensor(~self.viewed, dtype=torch.float32)
+
+        # Get tile types
+        tile_types = self.get_tile_type()
+
+        # Channels 1-3: empty, recon, mission tiles
+        for x in range(self.size):
+            for y in range(self.size):
+                if self.viewed[x, y]:
+                    tile_content = tile_types[x][y]
+                    if tile_content == TileContent.EMPTY:
+                        tensor[1, x, y] = 1.0
+                    elif tile_content == TileContent.RECON:
+                        tensor[2, x, y] = 1.0
+                    elif tile_content == TileContent.MISSION:
+                        tensor[3, x, y] = 1.0
+
+        # Channels 4-5: scout and guard
+        scouts, guards = self.get_agents()
+        tensor[4] = torch.tensor(scouts, dtype=torch.float32)
+        tensor[5] = torch.tensor(guards, dtype=torch.float32)
+
+        # Channels 6-9: walls (top, bottom, left, right)
+        walls = self.get_walls()
+        tensor[6] = torch.tensor(walls[:, :, 3], dtype=torch.float32)  # top walls
+        tensor[7] = torch.tensor(walls[:, :, 1], dtype=torch.float32)  # bottom walls
+        tensor[8] = torch.tensor(walls[:, :, 2], dtype=torch.float32)  # left walls
+        tensor[9] = torch.tensor(walls[:, :, 0], dtype=torch.float32)  # right walls
+
+        # Channel 10: last_updated (recently updated cells)
+        # Consider a cell as "recently updated" if it was updated in the last step
+        tensor[10] = torch.tensor(self.time_since_update / 100.0, dtype=torch.float32)
+
+        # Channel 11: is_here (agent location)
+        if 0 <= self.agent_loc[0] < self.size and 0 <= self.agent_loc[1] < self.size:
+            tensor[11, self.agent_loc[0], self.agent_loc[1]] = 1.0
+
+        # Channel 12: step (normalized to 0-1 by dividing by 100)
+        normalized_step = self.step_counter / 100.0
+        tensor[12].fill_(normalized_step)
+
+        # Channel 13: direction
+        tensor[13].fill_(float(self.direction))
+
+        return tensor
