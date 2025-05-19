@@ -26,8 +26,9 @@ class Point:
         self._hash: Optional[int] = None
 
     def __eq__(self, other):
-        if not isinstance(other, Point):
-            return False
+        # who cares about type safety? speed more important :cry:
+        # if not isinstance(other, Point):
+        #     return False
         return POINT_EQ_LOOKUP[self.x, other.x, self.y, other.y]
 
     def __hash__(self) -> int:

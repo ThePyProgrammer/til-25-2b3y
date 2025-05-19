@@ -80,6 +80,7 @@ class TrajectoryTree:
 
         # Flag to track if we've performed a reset (detected agent) yet
         self.has_reset = False
+        self.next_density: Optional[tuple[int, NDArray]] = None
 
 
     def step(self) -> int:
@@ -153,7 +154,7 @@ class TrajectoryTree:
         # Return count of new trajectories
         return len(expanded_trajectories)
 
-    def prune(self, information: list[tuple[Point, Tile]], seeking_scout: bool = True):
+    def prune(self, information: list[tuple[Point, Tile]], seeking_scout: bool = True, before_step: bool = False):
         """
         1. when I encounter the agent, I can destroy all trajectories since the agent's position is known
         2. when I encounter a tile that has not been visited, I remove all trajectories containing that tile (when seeking scout)
@@ -168,11 +169,11 @@ class TrajectoryTree:
         self._track_ambiguous_tiles(information)
 
         if seeking_scout:
-            self._prune_by_tile_content(information)
+            self._prune_by_tile_content(information, before_step=before_step)
 
         self._clean_up_trajectories()
 
-        if len(self.trajectories) == 0:
+        if len(self.trajectories) == 0 and not before_step:
             self.trajectories = create_trajectories_from_constraints(
                 self.roots,
                 self.temporal_constraints,
@@ -191,7 +192,7 @@ class TrajectoryTree:
 
             self.edge_trajectories = self.trajectories.copy()
 
-        if len(self.trajectories) == 0:
+        if len(self.trajectories) == 0 and not before_step:
             # Process agent sightings first (early exit)
             agent_position = self._check_for_agent(information, seeking_scout)
             if agent_position is not None:
@@ -209,6 +210,10 @@ class TrajectoryTree:
         Returns:
             numpy.ndarray: 2D array with probability for each position
         """
+        if self.next_density is not None:
+            if self.next_density[0] == self.num_step:
+                return self.next_density[1]
+
         # Initialize empty grid
         density = np.zeros((self.size, self.size), dtype=np.float32)
 
@@ -369,7 +374,7 @@ class TrajectoryTree:
         self.position_index.clear()
         self.tail_position_index.clear()
 
-    def _check_for_agent(self, information, seeking_scout):
+    def _check_for_agent(self, information: list[tuple[Point, Tile]], seeking_scout: bool) -> Optional[Point]:
         """Check if an agent is present in the information."""
         for position, tile in information:
             if ((seeking_scout and tile.has_scout) or (not seeking_scout and tile.has_guard)):
@@ -423,7 +428,7 @@ class TrajectoryTree:
     #         print(f"Ambiguous tile positions: {sorted(self.ambiguous_tiles)}")
     #     print(f"Number of trajectories: {len(self.trajectories)}")
 
-    def _prune_by_tile_content(self, information: list[tuple[Point, Tile]]):
+    def _prune_by_tile_content(self, information: list[tuple[Point, Tile]], before_step: bool = False):
         """Prune trajectories based on tile content."""
         # Group positions by condition to avoid redundant iterations
         route_constraints = Constraints([], [])
@@ -463,10 +468,10 @@ class TrajectoryTree:
         if Point(0, 0) in constraints.tail.excludes:
             constraints.tail.excludes.remove(Point(0, 0))
 
-        self._apply_filtering(constraints)
+        self._apply_filtering(constraints, before_step=before_step)
         self.temporal_constraints.update(constraints)
 
-    def _apply_filtering(self, constraints: TrajectoryConstraints):
+    def _apply_filtering(self, constraints: TrajectoryConstraints, before_step):
         """Apply filtering based on position constraints."""
 
         # Find trajectories to exclude (has any excluded position)
@@ -475,9 +480,10 @@ class TrajectoryTree:
             if position in self.position_index:
                 trajectories_to_remove.update(self.position_index[position])
 
-        for position in constraints.tail.excludes:
-            if position in self.tail_position_index:
-                trajectories_to_remove.update(self.tail_position_index[position])
+        if not before_step:
+            for position in constraints.tail.excludes:
+                if position in self.tail_position_index:
+                    trajectories_to_remove.update(self.tail_position_index[position])
 
         # Find trajectories to keep (has all required positions)
         trajectories_to_keep = set(self.trajectories)
@@ -493,14 +499,15 @@ class TrajectoryTree:
                 break
 
         # Filter by required tail positions
-        for position in constraints.tail.contains:
-            if position in self.tail_position_index:
-                trajectories_with_tail_position = self.tail_position_index[position]
-                trajectories_to_keep &= trajectories_with_tail_position
-            else:
-                # If a required tail position doesn't exist in any trajectory, no trajectories can satisfy
-                trajectories_to_keep = set()
-                break
+        if not before_step:
+            for position in constraints.tail.contains:
+                if position in self.tail_position_index:
+                    trajectories_with_tail_position = self.tail_position_index[position]
+                    trajectories_to_keep &= trajectories_with_tail_position
+                else:
+                    # If a required tail position doesn't exist in any trajectory, no trajectories can satisfy
+                    trajectories_to_keep = set()
+                    break
 
         # Compute final valid trajectories
         valid_trajectories = [
