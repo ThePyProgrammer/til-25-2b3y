@@ -29,14 +29,16 @@ from trainer.ppo.utils.ppo_update import ppo_update # Import the ppo_update func
 from trainer.ppo.utils.scheduler import create_scheduler # Import create_scheduler
 
 
-def init_agents(env):
+def init_agents(env, num_guards):
     scout_map = Map()
     guard_maps = {}
     guard_pathfinders = {}
 
     # Identify guard agents
     guards = [a for a in env.agents if a != env.scout]
-
+    random.shuffle(guards)
+    guards = guards[:num_guards]
+    
     # Initialize maps and pathfinders for guards
     for agent in guards:
         guard_maps[agent] = Map()
@@ -91,7 +93,7 @@ def main(args):
     # Reset the environment with seed
     env.reset(seed=args.seed)
 
-    agents = init_agents(env)
+    agents = init_agents(env, args.num_guards)
 
     scout_initial_observation = None
     # Iterate agents until we get scout's first observation after reset
@@ -184,7 +186,7 @@ def main(args):
         print("Resetting environment.")
         env.reset(seed=args.seed + timesteps_elapsed) # Vary seed for new episodes
         last_scout_step_info = None # Clear previous step
-        agents = init_agents(env)
+        agents = init_agents(env, args.num_guards)
 
         # Clear the buffer at the start of each episode since we train per episode
         buffer.clear()
@@ -211,7 +213,7 @@ def main(args):
                         action=last_scout_step_info['action'],
                         log_prob=last_scout_step_info['log_prob'],
                         value=last_scout_step_info['value'],
-                        reward=-50.0,
+                        reward=-50.0 / 100,
                         done=True # Episode ended
                     )
                     last_scout_step_info = None # Clear for next episode
@@ -231,7 +233,7 @@ def main(args):
                         action=last_scout_step_info['action'],
                         log_prob=last_scout_step_info['log_prob'],
                         value=last_scout_step_info['value'],
-                        reward=float(reward), # Reward for the step that ended just before this turn
+                        reward=float(reward) / 100, # Reward for the step that ended just before this turn
                         done=termination or truncation # Done for the step that ended just before this turn
                     )
                     last_scout_step_info = None # Clear as step is finalized
@@ -313,16 +315,16 @@ def main(args):
 
             # After agent_iter loop finishes (episode ended or truncated)
             # Finalize the very last step taken by the scout if it wasn't finalized by termination within the loop.
-            if last_scout_step_info is not None:
-                buffer.add(
-                    map_input=last_scout_step_info['map_input'],
-                    action=last_scout_step_info['action'],
-                    log_prob=last_scout_step_info['log_prob'],
-                    value=last_scout_step_info['value'],
-                    reward=0.0, # Assuming 0 reward for the last step at episode end
-                    done=True # Episode ended
-                )
-                last_scout_step_info = None # Clear for next episode
+            # if last_scout_step_info is not None:
+            #     buffer.add(
+            #         map_input=last_scout_step_info['map_input'],
+            #         action=last_scout_step_info['action'],
+            #         log_prob=last_scout_step_info['log_prob'],
+            #         value=last_scout_step_info['value'],
+            #         reward=reward,
+            #         done=True # Episode ended
+            #     )
+            #     last_scout_step_info = None # Clear for next episode
 
 
         # --- PPO Update ---

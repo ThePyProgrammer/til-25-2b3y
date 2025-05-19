@@ -18,6 +18,7 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=42, help='random seed')
     parser.add_argument('--env_id', type=str, default='gridworld', help='environment id') # Keep flexibility for different envs
     parser.add_argument('--render', action='store_true', help='render environment during training')
+    parser.add_argument('--num_guards', type=int, default=3, help='number of guards')
 
     args = parser.parse_args()
 
