@@ -198,10 +198,10 @@ class LargeMapEncoder(MapEncoder):
             embedding_dim=embedding_dim,
             conv_layers=[32, 64, 128, 256],
             kernel_sizes=[3, 3, 3, 3],
-            strides=[1, 2, 2, 2],
-            fc_layers=[512, 512],
+            strides=[1, 1, 1, 1],
+            fc_layers=[1024, 512],
             use_batch_norm=True,
-            dropout_rate=0.1,
+            dropout_rate=0.2,
             use_layer_norm=True
         )
 

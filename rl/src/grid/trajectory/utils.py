@@ -121,7 +121,7 @@ def expand_trajectories(
     trajectories: list[Trajectory],
     step: int,
     max_backtrack: int = 3,
-    num_samples_per_trajectory: int = 2,
+    num_samples_per_trajectory: Optional[int] = 2,
     consider_direction: bool = True
 ) -> list[Trajectory]:
     """
@@ -138,60 +138,71 @@ def expand_trajectories(
     Returns:
         List of expanded trajectories
     """
-    if num_samples_per_trajectory <= 0:
+    expanded: list[Trajectory] = []
+
+    if num_samples_per_trajectory is not None and num_samples_per_trajectory <= 0:
         return []
 
-    # If num_samples is 1, just keep the shortest trajectory for each endpoint
-    # If num_samples is 2, keep the shortest and longest (original behavior)
-    # If num_samples > 2, keep evenly spaced samples including shortest and longest
+    # Filter out deleted trajectories
+    valid_trajectories = [traj for traj in trajectories if not traj.to_delete]
 
-    # Group trajectories by endpoint
-    endpoint_to_trajectories = {}
-    for traj in trajectories:
-        if traj.to_delete:
-            continue
-
-        key = traj.get_endpoint_key(consider_direction)
-        if not key:
-            continue
-
-        if key not in endpoint_to_trajectories:
-            endpoint_to_trajectories[key] = []
-        endpoint_to_trajectories[key].append(traj)
-
-    # Select trajectories to expand
     selected_trajectories: list[Trajectory] = []
-    for key, group in endpoint_to_trajectories.items():
-        if not group:
-            continue
 
-        # Sort by trajectory length (shorter first)
-        group.sort(key=lambda t: len(t.route))
+    if num_samples_per_trajectory is None:
+        # If num_samples_per_trajectory is None, select all valid trajectories
+        selected_trajectories = valid_trajectories
+    else:
+        # If num_samples is 1, just keep the shortest trajectory for each endpoint
+        # If num_samples is 2, keep the shortest and longest (original behavior)
+        # If num_samples > 2, keep evenly spaced samples including shortest and longest
 
-        if num_samples_per_trajectory == 1:
-            # Just select the shortest
-            selected_trajectories.append(group[0])
-        elif num_samples_per_trajectory == 2 or len(group) <= 2:
-            # Select shortest and longest (original behavior)
-            selected_trajectories.append(group[0])
-            if len(group) > 1 and len(group[-1].route) > len(group[0].route):
-                selected_trajectories.append(group[-1])
-        else:
-            # Select n evenly spaced samples
-            if len(group) <= num_samples_per_trajectory:
-                # If we have fewer trajectories than requested samples, use them all
-                selected_trajectories.extend(group)
+        # Group valid trajectories by endpoint
+        endpoint_to_trajectories = {}
+        for traj in valid_trajectories:
+            key = traj.get_endpoint_key(consider_direction)
+            if not key:
+                continue
+
+            if key not in endpoint_to_trajectories:
+                endpoint_to_trajectories[key] = []
+            endpoint_to_trajectories[key].append(traj)
+
+        # Select trajectories from grouped valid trajectories
+        for key, group in endpoint_to_trajectories.items():
+            if not group:
+                continue
+
+            # Sort by trajectory length (shorter first)
+            group.sort(key=lambda t: len(t.route))
+
+            selected_group_trajectories: list[Trajectory] = [] # Use a temporary list for selection in this group
+
+            if num_samples_per_trajectory == 1:
+                # Just select the shortest
+                selected_group_trajectories.append(group[0])
+            elif num_samples_per_trajectory == 2 or len(group) <= 2:
+                # Select shortest and longest (original behavior)
+                selected_group_trajectories.append(group[0])
+                if len(group) > 1 and len(group[-1].route) > len(group[0].route):
+                    selected_group_trajectories.append(group[-1])
             else:
-                # Get num_samples evenly spaced samples
-                indices = [
-                    int(i * (len(group) - 1) / (num_samples_per_trajectory - 1))
-                    for i in range(num_samples_per_trajectory)
-                ]
-                for idx in indices:
-                    selected_trajectories.append(group[idx])
+                # Select n evenly spaced samples
+                if len(group) <= num_samples_per_trajectory:
+                    # If we have fewer trajectories than requested samples, use them all
+                    selected_group_trajectories.extend(group)
+                else:
+                    # Get num_samples evenly spaced samples
+                    indices = [
+                        int(i * (len(group) - 1) / (num_samples_per_trajectory - 1))
+                        for i in range(num_samples_per_trajectory)
+                    ]
+                    for idx in indices:
+                        selected_group_trajectories.append(group[idx])
+
+            # Add selected trajectories from this group to the main list
+            selected_trajectories.extend(selected_group_trajectories)
 
     # Now expand the selected trajectories
-    expanded: list[Trajectory] = []
     for trajectory in selected_trajectories:
         # Add the original trajectory
         expanded.append(trajectory)
