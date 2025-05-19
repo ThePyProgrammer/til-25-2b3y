@@ -123,7 +123,7 @@ class PPOActorCritic(nn.Module):
         shared_encoder: bool = True,
         encoder_kwargs: Optional[dict] = None
     ):
-        super(PPOActorCritic, self).__init__()
+        super().__init__()
 
         # Initialize default encoder kwargs if not provided
         if encoder_kwargs is None:

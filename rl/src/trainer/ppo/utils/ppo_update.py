@@ -168,9 +168,7 @@ def ppo_update(model: torch.nn.Module, optimizer: optim.Optimizer, data: Dict[st
 
             # Total Loss
             # Coefficients for balancing policy, value, and entropy losses
-            VALUE_LOSS_COEF = 0.5 # Common value
-            ENTROPY_COEF = 0.01 # Common value
-            total_loss = policy_loss + VALUE_LOSS_COEF * value_loss - ENTROPY_COEF * entropy_bonus
+            total_loss = policy_loss + args.value_loss_coef * value_loss - args.entropy_coef * entropy_bonus
 
 
             # 5. Backpropagate and Update

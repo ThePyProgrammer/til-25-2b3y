@@ -69,7 +69,7 @@ class MapEncoder(nn.Module):
         dropout_rate: float = 0.0,
         use_layer_norm: bool = True
     ):
-        super(MapEncoder, self).__init__()
+        super().__init__()
 
         # Input parameters
         self.map_size = map_size
@@ -174,7 +174,7 @@ class SmallMapEncoder(MapEncoder):
     """Smaller variant optimized for CPU inference."""
 
     def __init__(self, map_size=16, channels=12, embedding_dim=256):
-        super(SmallMapEncoder, self).__init__(
+        super().__init__(
             map_size=map_size,
             channels=channels,
             embedding_dim=embedding_dim,
@@ -192,13 +192,13 @@ class LargeMapEncoder(MapEncoder):
     """Larger variant for more complex environments."""
 
     def __init__(self, map_size=16, channels=12, embedding_dim=256):
-        super(LargeMapEncoder, self).__init__(
+        super().__init__(
             map_size=map_size,
             channels=channels,
             embedding_dim=embedding_dim,
-            conv_layers=[32, 64, 128, 256],
-            kernel_sizes=[3, 3, 3, 3],
-            strides=[1, 1, 1, 1],
+            conv_layers=[32, 64, 128, 256, 256],
+            kernel_sizes=[3, 3, 3, 3, 3],
+            strides=[1, 1, 1, 1, 1],
             fc_layers=[1024, 512],
             use_batch_norm=True,
             dropout_rate=0.2,

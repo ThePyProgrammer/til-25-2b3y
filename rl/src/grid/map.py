@@ -119,15 +119,15 @@ class Map:
                     # Skip tiles with no vision
                     if tile.is_visible:
                         # Check if wall information has changed
-                        old_value = self.map[x, y]
+                        old_value = self.map[y, x]
                         if old_value != rotated_tile_value:
                             # Wall configuration might have changed
                             updated_cells.append(info)
 
                         # Update map with tile information
-                        self.map[x, y] = rotated_tile_value
-                        self.viewed[x, y] = True
-                    self.last_updated[x, y] = self.step_counter  # Record when this cell was updated
+                        self.map[y, x] = rotated_tile_value
+                        self.viewed[y, x] = True
+                    self.last_updated[y, x] = self.step_counter  # Record when this cell was updated
 
         # Update node connections for cells with updated wall information
         for position, tile in updated_cells:
@@ -173,9 +173,9 @@ class Map:
 
         for x in range(self.size):
             for y in range(self.size):
-                if self.viewed[x, y]:
+                if self.viewed[y, x]:
                     # Use Tile utility to extract tile type
-                    tile = Tile(self.map[x, y])
+                    tile = Tile(self.map[y, x])
                     tile_types[x][y] = tile.tile_content
 
         return tile_types
@@ -402,16 +402,16 @@ class Map:
         tile_types = self.get_tile_type()
 
         # Channels 1-3: empty, recon, mission tiles
-        for x in range(self.size):
-            for y in range(self.size):
-                if self.viewed[x, y]:
-                    tile_content = tile_types[x][y]
+        for y in range(self.size):
+            for x in range(self.size):
+                if self.viewed[y, x]:
+                    tile_content = tile_types[y][x]
                     if tile_content == TileContent.EMPTY:
-                        tensor[1, x, y] = 1.0
+                        tensor[1, y, x] = 1.0
                     elif tile_content == TileContent.RECON:
-                        tensor[2, x, y] = 1.0
+                        tensor[2, y, x] = 1.0
                     elif tile_content == TileContent.MISSION:
-                        tensor[3, x, y] = 1.0
+                        tensor[3, y, x] = 1.0
 
         # Channels 4-5: scout and guard
         scouts, guards = self.get_agents()
@@ -431,7 +431,7 @@ class Map:
 
         # Channel 11: is_here (agent location)
         if 0 <= self.agent_loc[0] < self.size and 0 <= self.agent_loc[1] < self.size:
-            tensor[11, self.agent_loc[0], self.agent_loc[1]] = 1.0
+            tensor[11, self.agent_loc[1], self.agent_loc[0]] = 1.0
 
         # Channel 12: step (normalized to 0-1 by dividing by 100)
         normalized_step = self.step_counter / 100.0

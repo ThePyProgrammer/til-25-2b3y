@@ -51,7 +51,7 @@ def init_agents(env, num_guards):
     guards = [a for a in env.agents if a != env.scout]
     random.shuffle(guards)
     guards = guards[:num_guards]
-    
+
     # Initialize maps and pathfinders for guards
     for agent in guards:
         guard_maps[agent] = Map()
@@ -95,7 +95,7 @@ def main(args):
     if args.bfloat16:
         torch.set_default_dtype(torch.bfloat16)
         print("Using bfloat16 for training.")
-    
+
     env = gridworld.env(
         env_wrappers=[],  # clear out default env wrappers
         render_mode="human" if args.render else None,  # Render the map if requested
@@ -146,7 +146,8 @@ def main(args):
         action_dim=ACTION_DIM,
         map_size=MAP_SIZE,
         channels=CHANNELS,
-        encoder_type="large"
+        encoder_type="large",
+        shared_encoder=False,
     )
 
     model.cuda()
@@ -190,6 +191,7 @@ def main(args):
     # Experience collection buffer
     buffer = ExperienceBuffer()
     last_scout_step_info = None # Stores {S_t tensors, A_t, log_prob_t, V_t}
+    steps_since_saved = 0
 
 
     # Outer loop for total timesteps
@@ -213,7 +215,7 @@ def main(args):
             # This observation is the state *before* this agent acts.
             # reward/term/trunc are for this agent from the *previous* step.
             observation, reward, termination, truncation, info = env.last()
-            
+
             # Check if the current agent is done. If so, episode ends for all in this simplified setup.
             if termination or truncation:
                 reward = env.rewards[env.scout]
@@ -222,7 +224,6 @@ def main(args):
                 # If the scout had an unfinished step when another agent terminated or episode truncated,
                 # finalize the last scout step with assumed reward/done.
                 if last_scout_step_info is not None:
-                    scout_reward += scout_reward
                     buffer.add(
                         map_input=last_scout_step_info['map_input'],
                         action=last_scout_step_info['action'],
@@ -284,6 +285,7 @@ def main(args):
                 # Perform the action A_t
                 env.step(action.item())
                 timesteps_elapsed += 1
+                steps_since_saved += 1
 
                 # The PPO update will happen after the agent_iter loop breaks.
                 if timesteps_elapsed >= args.timesteps:
@@ -378,7 +380,8 @@ def main(args):
 
 
             # Save checkpoint
-            if timesteps_elapsed % 5000 == 0 or timesteps_elapsed >= args.timesteps:
+            if steps_since_saved > args.save_interval or timesteps_elapsed >= args.timesteps:
+                steps_since_saved = 0
                 checkpoint_path = os.path.join(args.save_dir, 'latest.pt')
                 torch.save({
                     'timesteps_elapsed': timesteps_elapsed,
