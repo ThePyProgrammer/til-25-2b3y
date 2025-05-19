@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 from utils.replay_buffer import ReplayBuffer
-from .encoder import StateEncoder
+from .recurrent_encoder import StateEncoder
 
 
 class DQN(nn.Module):
@@ -260,13 +260,13 @@ class DQN(nn.Module):
         # Convert actions to tensor if not already
         if not isinstance(actions, torch.Tensor):
             actions = torch.tensor(actions, dtype=torch.long)
-        
+
         # Convert rewards and dones to tensors if not already
         if not isinstance(rewards, torch.Tensor):
             rewards = torch.tensor(rewards, dtype=torch.float)
         if not isinstance(dones, torch.Tensor):
             dones = torch.tensor(dones, dtype=torch.float)
-            
+
         # Calculate current Q values
         current_q_values, _ = self(states)
         current_q_values = current_q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
@@ -395,7 +395,7 @@ class DoubleDQN(nn.Module):
         reward_batch = torch.tensor(batch[2], dtype=torch.float)
         next_state_batch = list(batch[3])
         done_batch = torch.tensor(batch[4], dtype=torch.float)
-        
+
         # Use update_with_batch for consistency
         return self.update_with_batch(state_batch, action_batch, reward_batch, next_state_batch, done_batch)
 
@@ -417,7 +417,7 @@ class DoubleDQN(nn.Module):
         # Convert actions to tensor if not already
         if not isinstance(actions, torch.Tensor):
             actions = torch.tensor(actions, dtype=torch.long)
-        
+
         # Convert rewards and dones to tensors if not already
         if not isinstance(rewards, torch.Tensor):
             rewards = torch.tensor(rewards, dtype=torch.float)
@@ -464,7 +464,7 @@ class DoubleDQN(nn.Module):
         checkpoint = torch.load(path)
         self.online_network.load_state_dict(checkpoint['online_network'])
         self.target_network.load_state_dict(checkpoint['target_network'])
-        
+
     # Make the interface consistent with DQN by forwarding methods
     def __getattr__(self, name):
         """

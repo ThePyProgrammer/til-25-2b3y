@@ -1,126 +1,302 @@
-from typing import Optional
-
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
+from typing import Optional, Union
 
-class StateEncoder(nn.Module):
+
+class ConvBlock(nn.Module):
+    """A configurable convolutional block with optional batch normalization."""
+
     def __init__(
         self,
-        act_cls: type[nn.ReLU] | type[nn.GELU] | type[nn.SiLU] | type[nn.LeakyReLU] = nn.ReLU,
-        dropout: float = 0.1,
-        lstm_dropout: float = 0.1,
-        lstm_layers: int = 3
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int = 3,
+        stride: int = 1,
+        padding: int = 1,
+        use_batch_norm: bool = False,
+        activation: nn.Module = nn.ReLU
     ):
-        super().__init__()
+        super(ConvBlock, self).__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)
+        self.use_batch_norm = use_batch_norm
+        if use_batch_norm:
+            self.bn = nn.BatchNorm2d(out_channels)
+        self.activation = activation()
 
-        self.spatial = nn.Sequential(
-            nn.Conv2d(10, 32, kernel_size=1),
-            act_cls(),
-            nn.BatchNorm2d(32),
-            nn.Dropout(dropout),
-            nn.Conv2d(32, 64, kernel_size=3),
-            act_cls(),
-            nn.BatchNorm2d(64),
-            nn.Dropout(dropout),
-            nn.Conv2d(64, 64, kernel_size=3),
-            act_cls(),
-            nn.BatchNorm2d(64),
-            nn.Dropout(dropout),
-            nn.Flatten(),
-        )
+    def forward(self, x):
+        x = self.conv(x)
+        if self.use_batch_norm:
+            x = self.bn(x)
+        return self.activation(x)
 
-        self.static = nn.Sequential(
-            nn.Linear(3, 32),
-            act_cls(),
-            nn.Dropout(dropout),
-            nn.Linear(32, 32),
-            act_cls(),
-            nn.Dropout(dropout),
-            nn.LayerNorm(32),
-        )
 
-        self.joint = nn.Sequential(
-            nn.Linear(224, 128),
-            act_cls(),
-            nn.Dropout(dropout),
-            nn.Linear(128, 128),
-            act_cls(),
-            nn.Dropout(dropout),
-            nn.LayerNorm(128),
-        )
+class MapEncoder(nn.Module):
+    """
+    Configurable encoder network for processing grid maps for PPO.
 
-        self.recurrent = nn.LSTM(128, 128, num_layers=lstm_layers, dropout=lstm_dropout)
+    Designed to be:
+    1. Extensible - easy to modify architecture
+    2. CPU-friendly - balanced complexity for inference
+    3. Configurable - adjust capacity based on requirements
 
-        self.h_n: Optional[torch.Tensor] = None # cached final hidden state
-        self.c_n: Optional[torch.Tensor] = None # cached final cell state
+    Map Channels:
+    - no_vision (0/1)
+    - empty (0/1)
+    - recon (0/1)
+    - mission (0/1)
+    - scout (0/1)
+    - guard (0/1)
+    - top_wall (0/1)
+    - bottom_wall (0/1)
+    - left_wall (0/1)
+    - right_wall (0/1)
+    - last_updated (0/1)
+    - is_here (0/1/2/3) for directions
+    """
 
-    def forward(
+    def __init__(
         self,
-        states: list[list[tuple[torch.Tensor, torch.Tensor]]],
-        h_n: Optional[torch.Tensor] = None,
-        c_n: Optional[torch.Tensor] = None,
-        use_cached_states: bool = False
+        map_size: int = 16,
+        channels: int = 12,
+        embedding_dim: int = 256,
+        conv_layers: list[int] = [32, 64, 128, 256],
+        kernel_sizes: list[int] = [3, 3, 3, 3],
+        strides: list[int] = [2, 2, 2, 2],
+        fc_layers: list[int] = [512],
+        use_batch_norm: bool = False,
+        dropout_rate: float = 0.0,
+        use_layer_norm: bool = True
     ):
-        # Process each sequence in the batch
-        all_embeddings = []
-        seq_lengths = []
+        super(MapEncoder, self).__init__()
 
-        # Process each sequence separately first
-        for seq in states:
-            seq_spatial = []
-            seq_static = []
+        # Input parameters
+        self.map_size = map_size
+        self.channels = channels
 
-            # Extract spatial and static components
-            for spatial, static in seq:
-                seq_spatial.append(spatial)
-                seq_static.append(static)
+        # Build CNN layers
+        assert len(conv_layers) == len(kernel_sizes) == len(strides), "Conv params must have same length"
 
-            # Skip if sequence is empty
-            if not seq_spatial:
-                seq_lengths.append(0)
-                continue
+        # Initialize layers list and current channels count
+        self.conv_blocks = nn.ModuleList()
+        in_channels = channels
 
-            # Batch process all spatial tensors in this sequence
-            seq_spatial = torch.stack(seq_spatial)
-            seq_static = torch.stack(seq_static)
+        # Current spatial dimension
+        current_size = map_size
 
-            # Forward through respective networks
-            spatial_embeddings = self.spatial(seq_spatial)
-            static_embeddings = self.static(seq_static)
+        # Add convolutional blocks
+        for out_channels, kernel_size, stride in zip(conv_layers, kernel_sizes, strides):
+            self.conv_blocks.append(
+                ConvBlock(
+                    in_channels,
+                    out_channels,
+                    kernel_size,
+                    stride,
+                    padding=kernel_size//2,  # Same padding
+                    use_batch_norm=use_batch_norm
+                )
+            )
+            in_channels = out_channels
+            current_size = current_size // stride if stride > 1 else current_size
 
-            # Concatenate and process through joint network
-            combined = torch.cat([spatial_embeddings, static_embeddings], dim=1)
-            seq_embeddings = self.joint(combined)
+        # Step embedding
+        self.step_embed = nn.Linear(1, 64)
 
-            all_embeddings.append(seq_embeddings)
-            seq_lengths.append(len(seq))
+        # Calculate flattened size after convolutions
+        self.flattened_size = conv_layers[-1] * current_size * current_size
 
-        # Handle case with no data or all empty sequences
-        if not all_embeddings:
-            batch_size = len(states)
-            output = torch.zeros(0, batch_size, 128)  # [seq_len, batch_size, hidden_size]
-            h_out = torch.zeros(self.recurrent.num_layers, batch_size, 128) if h_n is None else h_n
-            c_out = torch.zeros(self.recurrent.num_layers, batch_size, 128) if c_n is None else c_n
-            self.h_n, self.c_n = h_out, c_out
-            return output, (self.h_n, self.c_n)
+        # Build fully connected layers
+        self.fc_blocks = nn.ModuleList()
+        in_features = self.flattened_size + 64  # +64 for step embedding
 
-        # Pack sequences for LSTM processing
-        # Filter out empty sequences
-        non_empty_embeddings = [emb for emb, length in zip(all_embeddings, seq_lengths) if length > 0]
-        packed_sequences = nn.utils.rnn.pack_sequence(non_empty_embeddings, enforce_sorted=False)
+        for out_features in fc_layers:
+            self.fc_blocks.append(nn.Linear(in_features, out_features))
+            if use_layer_norm:
+                self.fc_blocks.append(nn.LayerNorm(out_features))
+            self.fc_blocks.append(nn.ReLU())
+            if dropout_rate > 0:
+                self.fc_blocks.append(nn.Dropout(dropout_rate))
+            in_features = out_features
 
-        # Set up LSTM initial states
-        lstm_kwargs = {}
-        if use_cached_states:
-            if self.h_n is not None and self.c_n is not None:
-                lstm_kwargs["hx"] = (self.h_n, self.c_n)
-        elif h_n is not None and c_n is not None:
-            lstm_kwargs["hx"] = (h_n, c_n)
+        # Final output layer
+        self.output_layer = nn.Linear(in_features, embedding_dim)
+        if use_layer_norm:
+            self.output_norm = nn.LayerNorm(embedding_dim)
 
-        # Process through LSTM
-        packed_output, (self.h_n, self.c_n) = self.recurrent(packed_sequences, **lstm_kwargs)
+        # Record architecture for debugging
+        self._config = {
+            'map_size': map_size,
+            'channels': channels,
+            'embedding_dim': embedding_dim,
+            'conv_layers': conv_layers,
+            'kernel_sizes': kernel_sizes,
+            'strides': strides,
+            'fc_layers': fc_layers,
+            'final_spatial_size': current_size,
+            'use_batch_norm': use_batch_norm,
+            'use_layer_norm': use_layer_norm,
+            'dropout_rate': dropout_rate
+        }
 
-        # Unpack sequences
-        output = nn.utils.rnn.unpack_sequence(packed_output)
+    def get_config(self):
+        """Return the configuration of this encoder."""
+        return self._config
 
-        return output, (self.h_n, self.c_n)
+    def forward(self, map_input, step):
+        """
+        Forward pass through the encoder.
+
+        Args:
+            map_input: Tensor of shape [batch_size, channels, height, width]
+            step: Tensor of shape [batch_size, 1] representing the current step
+
+        Returns:
+            Tensor of shape [batch_size, embedding_dim] containing the encoded state
+        """
+        # Process map through CNN blocks
+        x = map_input
+        for block in self.conv_blocks:
+            x = block(x)
+
+        # Flatten spatial features
+        x = x.view(-1, self.flattened_size)
+
+        # Process step feature
+        step_x = F.relu(self.step_embed(step))
+
+        # Concatenate map features with step embedding
+        x = torch.cat([x, step_x], dim=1)
+
+        # Process through FC blocks
+        for layer in self.fc_blocks:
+            x = layer(x)
+
+        # Final output layer
+        x = self.output_layer(x)
+        if hasattr(self, 'output_norm'):
+            x = self.output_norm(x)
+
+        return x
+
+
+class SmallMapEncoder(MapEncoder):
+    """Smaller variant optimized for CPU inference."""
+
+    def __init__(self, map_size=16, channels=12, embedding_dim=256):
+        super(SmallMapEncoder, self).__init__(
+            map_size=map_size,
+            channels=channels,
+            embedding_dim=embedding_dim,
+            conv_layers=[32, 64, 64],
+            kernel_sizes=[5, 3, 3],  # Larger initial kernel to capture more context
+            strides=[2, 2, 2],       # More aggressive downsampling
+            fc_layers=[256],         # Smaller FC layer
+            use_batch_norm=False,    # Skip batch norm for CPU efficiency
+            dropout_rate=0.0,        # Skip dropout for inference speed
+            use_layer_norm=True      # Keep layer norm for stability
+        )
+
+
+class LargeMapEncoder(MapEncoder):
+    """Larger variant for more complex environments."""
+
+    def __init__(self, map_size=16, channels=12, embedding_dim=256):
+        super(LargeMapEncoder, self).__init__(
+            map_size=map_size,
+            channels=channels,
+            embedding_dim=embedding_dim,
+            conv_layers=[32, 64, 128, 256],
+            kernel_sizes=[3, 3, 3, 3],
+            strides=[1, 2, 2, 2],
+            fc_layers=[512, 512],
+            use_batch_norm=True,
+            dropout_rate=0.1,
+            use_layer_norm=True
+        )
+
+
+def create_encoder(encoder_type="standard", **kwargs):
+    """Factory function to create different encoder variants."""
+    if encoder_type == "small":
+        return SmallMapEncoder(**kwargs)
+    elif encoder_type == "large":
+        return LargeMapEncoder(**kwargs)
+    else:  # "standard" or any other value
+        return MapEncoder(**kwargs)
+
+
+class FeatureExtractor:
+    """Utility class to preprocess observations for input to the MapEncoder."""
+
+    def __init__(self, device=torch.device("cpu")):
+        self.device = device
+
+    def process_obs(self, observation):
+        """
+        Process raw observation into format suitable for MapEncoder.
+
+        Args:
+            observation: Raw observation from environment
+
+        Returns:
+            map_tensor: Tensor for map features
+            step_tensor: Tensor for step feature
+        """
+        # Extract map and step from observation
+        # Adjust based on actual observation format
+        map_data = observation.get("map", None)
+        step = observation.get("step", 0)
+
+        # Convert to tensors
+        map_tensor = torch.FloatTensor(map_data).to(self.device)
+        step_tensor = torch.FloatTensor([[step]]).to(self.device)
+
+        return map_tensor, step_tensor
+
+
+if __name__ == "__main__":
+    # Example usage and benchmarking
+    import time
+
+    # Sample data
+    batch_size = 1
+    map_input = torch.rand(batch_size, 12, 16, 16)
+    step_input = torch.rand(batch_size, 1)
+
+    # Test different encoder configurations
+    encoders = {
+        "standard": create_encoder(),
+        "small": create_encoder("small"),
+        "large": create_encoder("large"),
+        "custom": create_encoder(
+            conv_layers=[16, 32, 64],
+            kernel_sizes=[5, 3, 3],
+            strides=[2, 2, 2],
+            fc_layers=[128],
+            use_batch_norm=False
+        )
+    }
+
+    # Simple benchmark
+    print("Encoder benchmarks (CPU):")
+    for name, encoder in encoders.items():
+        # Warm up
+        for _ in range(5):
+            _ = encoder(map_input, step_input)
+
+        # Benchmark
+        start_time = time.time()
+        iterations = 100
+        for _ in range(iterations):
+            output = encoder(map_input, step_input)
+
+        avg_time = (time.time() - start_time) / iterations * 1000  # ms
+        param_count = sum(p.numel() for p in encoder.parameters())
+
+        print(f"  {name}: {avg_time:.2f}ms per batch, params: {param_count:,}, "
+              f"output shape: {output.shape}")
+
+        # Print architecture details
+        print(f"  Config: {encoder.get_config()}")
+        print()
