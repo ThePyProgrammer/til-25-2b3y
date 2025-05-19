@@ -75,7 +75,6 @@ def ppo_update(model: torch.nn.Module, optimizer: optim.Optimizer, data: Dict[st
         optimizer: The optimizer for the model.
         data: A dictionary containing batched tensors for the update:
               'map_inputs': (T, C, H, W)
-              'step_inputs': (T, 1)
               'actions': (T,)
               'log_probs': (T,) (old log probabilities)
               'values': (T,) (old value estimates)
@@ -91,7 +90,6 @@ def ppo_update(model: torch.nn.Module, optimizer: optim.Optimizer, data: Dict[st
         - total_loss
     """
     b_map_inputs = data['map_inputs']
-    b_step_inputs = data['step_inputs']
     b_actions = data['actions']
     b_log_probs_old = data['log_probs']
     b_values_old = data['values']
@@ -134,7 +132,6 @@ def ppo_update(model: torch.nn.Module, optimizer: optim.Optimizer, data: Dict[st
             mini_batch_indices = shuffled_indices[start_idx:end_idx]
 
             mb_map_inputs = b_map_inputs[mini_batch_indices]
-            mb_step_inputs = b_step_inputs[mini_batch_indices]
             mb_actions = b_actions[mini_batch_indices]
             mb_log_probs_old = b_log_probs_old[mini_batch_indices]
             mb_values_old = b_values_old[mini_batch_indices]
@@ -144,7 +141,7 @@ def ppo_update(model: torch.nn.Module, optimizer: optim.Optimizer, data: Dict[st
             # 4. Compute Loss
             # Get new log probs and values from the current model
             # Ensure inputs match model dtype (already handled during collection if bfloat16)
-            log_probs_new, entropy, values_new = model.evaluate_actions(mb_map_inputs, mb_step_inputs, mb_actions)
+            log_probs_new, entropy, values_new = model.evaluate_actions(mb_map_inputs, mb_actions)
 
             # Policy Loss (Clipped Surrogate Objective)
             # Ensure ratio calculation is done in floating point (bfloat16 or float32)
@@ -225,7 +222,6 @@ if __name__ == '__main__':
     action_dim = 4
 
     dummy_map_inputs = torch.randn(batch_size, channels, map_size, map_size, dtype=torch.float32)
-    dummy_step_inputs = torch.randn(batch_size, 1, dtype=torch.float32)
     dummy_actions = torch.randint(0, action_dim, (batch_size,), dtype=torch.long)
     dummy_log_probs_old = torch.randn(batch_size, dtype=torch.float32) # Log probs from a distribution
     dummy_values_old = torch.randn(batch_size, dtype=torch.float32)
@@ -234,7 +230,6 @@ if __name__ == '__main__':
 
     dummy_data = {
         'map_inputs': dummy_map_inputs,
-        'step_inputs': dummy_step_inputs,
         'actions': dummy_actions,
         'log_probs': dummy_log_probs_old,
         'values': dummy_values_old,

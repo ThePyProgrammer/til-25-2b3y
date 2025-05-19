@@ -166,15 +166,14 @@ class PPOActorCritic(nn.Module):
             hidden_dims=critic_hidden_dims
         )
 
-    def get_value(self, map_input, step):
+    def get_value(self, map_input):
         """Get state value estimate from critic."""
-        critic_embedding = self.critic_encoder(map_input, step)
+        critic_embedding = self.critic_encoder(map_input)
         return self.critic(critic_embedding)
 
     def get_action_and_value(
         self,
         map_input,
-        step,
         action=None,
         greedy=False
     ):
@@ -183,7 +182,6 @@ class PPOActorCritic(nn.Module):
 
         Args:
             map_input: Map observation tensor
-            step: Current step tensor
             action: If provided, evaluate this action instead of sampling
             deterministic: If True and action is None, sample deterministically
 
@@ -194,13 +192,13 @@ class PPOActorCritic(nn.Module):
             value: State value estimate
         """
         # Get actor embedding
-        actor_embedding = self.actor_encoder(map_input, step)
+        actor_embedding = self.actor_encoder(map_input)
 
         # Get critic embedding (same as actor if shared)
         if self.shared_encoder:
             critic_embedding = actor_embedding
         else:
-            critic_embedding = self.critic_encoder(map_input, step)
+            critic_embedding = self.critic_encoder(map_input)
 
         # Get state value
         value = self.critic(critic_embedding)
@@ -218,13 +216,12 @@ class PPOActorCritic(nn.Module):
 
         return action, log_prob, entropy, value
 
-    def evaluate_actions(self, map_input, step, actions):
+    def evaluate_actions(self, map_input, actions):
         """
         Evaluate actions for PPO update.
 
         Args:
             map_input: Map observation tensor
-            step: Current step tensor
             actions: Actions to evaluate
 
         Returns:
@@ -233,13 +230,13 @@ class PPOActorCritic(nn.Module):
             values: State value estimates
         """
         # Get actor embedding
-        actor_embedding = self.actor_encoder(map_input, step)
+        actor_embedding = self.actor_encoder(map_input)
 
         # Get critic embedding (same as actor if shared)
         if self.shared_encoder:
             critic_embedding = actor_embedding
         else:
-            critic_embedding = self.critic_encoder(map_input, step)
+            critic_embedding = self.critic_encoder(map_input)
 
         # Get action log probs and entropy
         log_probs, entropy = self.actor.evaluate_actions(actor_embedding, actions)
@@ -259,7 +256,6 @@ if __name__ == "__main__":
 
     # Sample inputs
     map_input = torch.rand(batch_size, channels, map_size, map_size)
-    step_input = torch.rand(batch_size, 1)
 
     # Create model
     model = PPOActorCritic(
@@ -270,15 +266,14 @@ if __name__ == "__main__":
     )
 
     # Test forward pass
-    action, log_prob, entropy, value = model.get_action_and_value(map_input, step_input)
+    action, log_prob, entropy, value = model.get_action_and_value(map_input)
 
-    print(f"Input shapes: Map {map_input.shape}, Step {step_input.shape}")
     print(f"Action shape: {action.shape}, Value shape: {value.shape}")
     print(f"Log prob shape: {log_prob.shape}, Entropy shape: {entropy.shape}")
 
     # Test evaluation
     sampled_actions = torch.randint(0, action_dim, (batch_size,))
-    log_probs, entropy, values = model.evaluate_actions(map_input, step_input, sampled_actions)
+    log_probs, entropy, values = model.evaluate_actions(map_input, sampled_actions)
 
     print(f"Evaluated actions shape: {sampled_actions.shape}")
     print(f"Log probs shape: {log_probs.shape}")

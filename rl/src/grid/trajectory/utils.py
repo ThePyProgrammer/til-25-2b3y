@@ -41,7 +41,7 @@ def fast_forward_trajectories(
         if not candidates:
             continue
 
-        print(f"Restarting from {len(candidates)} candidates at {backward_step}")
+        # print(f"Restarting from {len(candidates)} candidates at {backward_step}")
 
         # Forward propagate candidates
         candidates = propagate_candidates_forward(
@@ -54,7 +54,7 @@ def fast_forward_trajectories(
         )
 
         if candidates:
-            print(f"Found {len(candidates)} valid candidates")
+            # print(f"Found {len(candidates)} valid candidates")
             return candidates
 
     return []
@@ -110,7 +110,7 @@ def propagate_candidates_forward(
             else new_candidates
         )
 
-        print(f"Step {forward_step}: {len(candidates)} candidates remain after filtering")
+        # print(f"Step {forward_step}: {len(candidates)} candidates remain after filtering")
 
         if not candidates:
             break

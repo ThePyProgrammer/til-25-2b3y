@@ -100,15 +100,12 @@ class MapEncoder(nn.Module):
             in_channels = out_channels
             current_size = current_size // stride if stride > 1 else current_size
 
-        # Step embedding
-        self.step_embed = nn.Linear(1, 64)
-
         # Calculate flattened size after convolutions
         self.flattened_size = conv_layers[-1] * current_size * current_size
 
         # Build fully connected layers
         self.fc_blocks = nn.ModuleList()
-        in_features = self.flattened_size + 64  # +64 for step embedding
+        in_features = self.flattened_size
 
         for out_features in fc_layers:
             self.fc_blocks.append(nn.Linear(in_features, out_features))
@@ -143,13 +140,12 @@ class MapEncoder(nn.Module):
         """Return the configuration of this encoder."""
         return self._config
 
-    def forward(self, map_input, step):
+    def forward(self, map_input):
         """
         Forward pass through the encoder.
 
         Args:
             map_input: Tensor of shape [batch_size, channels, height, width]
-            step: Tensor of shape [batch_size, 1] representing the current step
 
         Returns:
             Tensor of shape [batch_size, embedding_dim] containing the encoded state
@@ -161,12 +157,6 @@ class MapEncoder(nn.Module):
 
         # Flatten spatial features
         x = x.view(-1, self.flattened_size)
-
-        # Process step feature
-        step_x = F.relu(self.step_embed(step))
-
-        # Concatenate map features with step embedding
-        x = torch.cat([x, step_x], dim=1)
 
         # Process through FC blocks
         for layer in self.fc_blocks:
@@ -225,36 +215,6 @@ def create_encoder(encoder_type="standard", **kwargs):
     else:  # "standard" or any other value
         return MapEncoder(**kwargs)
 
-
-class FeatureExtractor:
-    """Utility class to preprocess observations for input to the MapEncoder."""
-
-    def __init__(self, device=torch.device("cpu")):
-        self.device = device
-
-    def process_obs(self, observation):
-        """
-        Process raw observation into format suitable for MapEncoder.
-
-        Args:
-            observation: Raw observation from environment
-
-        Returns:
-            map_tensor: Tensor for map features
-            step_tensor: Tensor for step feature
-        """
-        # Extract map and step from observation
-        # Adjust based on actual observation format
-        map_data = observation.get("map", None)
-        step = observation.get("step", 0)
-
-        # Convert to tensors
-        map_tensor = torch.FloatTensor(map_data).to(self.device)
-        step_tensor = torch.FloatTensor([[step]]).to(self.device)
-
-        return map_tensor, step_tensor
-
-
 if __name__ == "__main__":
     # Example usage and benchmarking
     import time
@@ -262,7 +222,6 @@ if __name__ == "__main__":
     # Sample data
     batch_size = 1
     map_input = torch.rand(batch_size, 12, 16, 16)
-    step_input = torch.rand(batch_size, 1)
 
     # Test different encoder configurations
     encoders = {
@@ -283,13 +242,13 @@ if __name__ == "__main__":
     for name, encoder in encoders.items():
         # Warm up
         for _ in range(5):
-            _ = encoder(map_input, step_input)
+            _ = encoder(map_input)
 
         # Benchmark
         start_time = time.time()
         iterations = 100
         for _ in range(iterations):
-            output = encoder(map_input, step_input)
+            output = encoder(map_input)
 
         avg_time = (time.time() - start_time) / iterations * 1000  # ms
         param_count = sum(p.numel() for p in encoder.parameters())

@@ -67,7 +67,7 @@ def create_trajectories_from_constraints(
             # Apply beam search if needed
             trajectories_to_explore = _apply_beam_search(trajectories_to_explore, beam_width)
 
-    print(f"Search complete. Found {len(valid_trajectories)} valid trajectories after exploring {explored_count} paths.")
+    # print(f"Search complete. Found {len(valid_trajectories)} valid trajectories after exploring {explored_count} paths.")
 
     # If modifications are enabled and we found some valid trajectories, try to improve them
     if enable_modifications:
@@ -88,7 +88,7 @@ def _apply_trajectory_modifications(
     if not valid_trajectories:
         return valid_trajectories
 
-    print("Attempting to create modified trajectories with detours...")
+    # print("Attempting to create modified trajectories with detours...")
 
     # Find trajectories that visit some but not all required points
     partial_trajectories: list[Trajectory] = []
@@ -97,7 +97,7 @@ def _apply_trajectory_modifications(
             partial_trajectories.append(traj)
 
     if partial_trajectories:
-        print(f"Found {len(partial_trajectories)} partial trajectories to modify")
+        # print(f"Found {len(partial_trajectories)} partial trajectories to modify")
         modified_trajectories = _create_trajectories_with_modifications(
             partial_trajectories,
             temporal_constraints,
@@ -112,7 +112,7 @@ def _apply_trajectory_modifications(
                 valid_trajectories.append(traj)
                 modified_count += 1
 
-        print(f"Added {modified_count} modified trajectories")
+        # print(f"Added {modified_count} modified trajectories")
 
     return valid_trajectories
 
@@ -132,7 +132,7 @@ def _initialize_trajectory_queue(
         heapq.heappush(trajectories_to_explore, (priority, counter, trajectory))
         counter += 1
 
-    print(f"Starting search with {len(roots)} root nodes")
+    # print(f"Starting search with {len(roots)} root nodes")
     return trajectories_to_explore, counter
 
 
@@ -148,20 +148,20 @@ def _log_exploration_progress(
     if explored_count % 100 != 0:
         return
 
-    print(f"Explored {explored_count} trajectories, queue size: {len(trajectories_to_explore)}")
-    print(f"Current best priority: {priority}, trajectory length: {len(current_trajectory.route)}")
+    # print(f"Explored {explored_count} trajectories, queue size: {len(trajectories_to_explore)}")
+    # print(f"Current best priority: {priority}, trajectory length: {len(current_trajectory.route)}")
 
     if len(temporal_constraints) > 0:
         required_points = temporal_constraints[-1].route.contains
         visited = sum(1 for p in required_points if p in current_trajectory.position_cache)
-        print(f"Visited {visited}/{len(required_points)} required points")
+        # print(f"Visited {visited}/{len(required_points)} required points")
 
         # Print minimum distance to any unvisited point
         if visited < len(required_points):
             current_pos = current_trajectory.tail.position
             unvisited = [p for p in required_points if p not in current_trajectory.position_cache]
             min_dist = min(abs(current_pos.x - p.x) + abs(current_pos.y - p.y) for p in unvisited)
-            print(f"Minimum distance to unvisited point: {min_dist}, remaining budget: {budget - len(current_trajectory.route)}")
+            # print(f"Minimum distance to unvisited point: {min_dist}, remaining budget: {budget - len(current_trajectory.route)}")
 
     sys.stdout.flush()  # Ensure output is displayed immediately
 
@@ -224,7 +224,7 @@ def _apply_beam_search(
 ) -> list[tuple[float, int, Trajectory]]:
     """Apply beam search to limit queue size."""
     if len(trajectories_to_explore) > beam_width:
-        print(f"Applying beam search: pruning queue from {len(trajectories_to_explore)} to {beam_width}")
+        # print(f"Applying beam search: pruning queue from {len(trajectories_to_explore)} to {beam_width}")
         trajectories_to_explore = heapq.nsmallest(beam_width, trajectories_to_explore)
         heapq.heapify(trajectories_to_explore)
     return trajectories_to_explore

@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 
-sys.path.append(str(pathlib.Path(os.getcwd()).parent.resolve() / "til-25-environment"))
+sys.path.append(str(pathlib.Path(os.getcwd()).parent.parent.resolve() / "til-25-environment"))
 sys.path.append(str(pathlib.Path(os.getcwd()).resolve()))
 
 from networks.ppo import PPOActorCritic
@@ -27,6 +27,42 @@ from grid.viz import MapVisualizer # May not be needed for training, but keep fo
 from trainer.ppo.utils.buffer import ExperienceBuffer
 from trainer.ppo.utils.ppo_update import ppo_update # Import the ppo_update function
 from trainer.ppo.utils.scheduler import create_scheduler # Import create_scheduler
+
+
+def init_agents(env):
+    scout_map = Map()
+    guard_maps = {}
+    guard_pathfinders = {}
+
+    # Identify guard agents
+    guards = [a for a in env.agents if a != env.scout]
+
+    # Initialize maps and pathfinders for guards
+    for agent in guards:
+        guard_maps[agent] = Map()
+        guard_maps[agent].create_trajectory_tree(Point(0, 0))
+        guard_pathfinders[agent] = Pathfinder(
+            guard_maps[agent],
+            PathfinderConfig(
+                use_viewcone=False,
+                use_path_density=False # Can be made configurable later
+            )
+        )
+    
+    return {
+        'names': {
+            'scout': env.scout,
+            'guards': guards,
+        },
+        'maps': {
+            'scout': scout_map,
+            'guards': guard_maps,
+        },
+        'pathfinders': {
+            'guards': guard_pathfinders
+        }
+    }
+    
 
 def main(args):
 
@@ -54,27 +90,8 @@ def main(args):
     )
     # Reset the environment with seed
     env.reset(seed=args.seed)
-
-    # Initialize scout's map and guard maps/pathfinders for the new episode
-    scout_map = Map()
-    guard_maps = {}
-    guard_pathfinders = {}
-
-    # Identify guard agents
-    guards = [a for a in env.agents if a != env.scout]
-
-    # Initialize maps and pathfinders for guards
-    for guard_agent in guards:
-        guard_maps[guard_agent] = Map()
-        # Guards might need trajectory trees or specific pathfinder configs
-        # Based on demo.py, using basic pathfinding without viewcone or density for simplicity
-        guard_pathfinders[guard_agent] = Pathfinder(
-            guard_maps[guard_agent],
-            PathfinderConfig(
-                use_viewcone=False,
-                use_path_density=False # Can be made configurable later
-            )
-        )
+    
+    agents = init_agents(env)
 
     # Get initial observation to determine tensor shapes
     # We need to iterate through agents until we get scout's first observation after reset
@@ -120,8 +137,8 @@ def main(args):
         raise RuntimeError("Could not get initial observation for the scout after reset.")
 
     # Update scout's map with the initial observation to determine tensor shape
-    scout_map(scout_initial_observation)
-    dummy_map_tensor = scout_map.get_tensor()
+    agents['maps']['scout'](scout_initial_observation)
+    dummy_map_tensor = agents['maps']['scout'].get_tensor()
     print(f"Scout map tensor shape: {dummy_map_tensor.shape}")
 
     # Determine MAP_SIZE and CHANNELS from the map tensor shape
@@ -133,8 +150,8 @@ def main(args):
     if MAP_SIZE != dummy_map_tensor.shape[2]:
          print(f"Warning: Map tensor is not square. Assuming MAP_SIZE = {MAP_SIZE}")
 
-    # Assuming Action_DIM is 4 for movement (Up, Down, Left, Right)
-    ACTION_DIM = 4
+    # Assuming Action_DIM is 5 for movement (Foward, Backward, Turn left, Turn right, Stay)
+    ACTION_DIM = 5
     print(f"Detected Map size: {MAP_SIZE}, Channels: {CHANNELS}, Action Dim: {ACTION_DIM}")
 
 
@@ -143,8 +160,11 @@ def main(args):
         action_dim=ACTION_DIM,
         map_size=MAP_SIZE,
         channels=CHANNELS,
-        encoder_type="small" # Using "small" encoder
+        encoder_type="large"
     ).to(device) # Move model to device
+    
+    if args.bfloat16:
+        model.to(torch.bfloat16)
 
     # Select Optimizer
     if args.optim.lower() == 'adam':
@@ -196,10 +216,9 @@ def main(args):
         print("Resetting environment.")
         env.reset(seed=args.seed + timesteps_elapsed) # Vary seed for new episodes
         # The first observation will be available via env.last() in the first agent's turn.
-        last_scout_step_info = None # Clear previous step info
-        # Re-initialize scout's map for the new episode
-        scout_map = Map()
-
+        last_scout_step_info = None # Clear previous step 
+        agents = init_agents(env)
+        
         # Clear the buffer at the start of each episode since we train per episode
         buffer.clear()
 
@@ -220,16 +239,14 @@ def main(args):
                 if last_scout_step_info is not None:
                     buffer.add(
                         map_input=last_scout_step_info['map_input'],
-                        step_input=last_scout_step_info['step_input'],
                         action=last_scout_step_info['action'],
                         log_prob=last_scout_step_info['log_prob'],
                         value=last_scout_step_info['value'],
-                        reward=0.0, # Assuming 0 reward on early termination/truncation
+                        reward=-50.0,
                         done=True # Episode ended
                     )
                     last_scout_step_info = None # Clear for next episode
                 break # End agent_iter loop (episode)
-
 
             # Only process for the scout agent
             if agent == env.scout:
@@ -241,7 +258,6 @@ def main(args):
                     # R_{t-1}, done_{t-1} are available now from env.last()
                     buffer.add(
                         map_input=last_scout_step_info['map_input'],
-                        step_input=last_scout_step_info['step_input'],
                         action=last_scout_step_info['action'],
                         log_prob=last_scout_step_info['log_prob'],
                         value=last_scout_step_info['value'],
@@ -255,28 +271,25 @@ def main(args):
                         episode_ended = True
                         break # End agent_iter loop
 
-
                 # --- Collect state, action, log_prob, value for the current step (S_t, A_t, log_prob_t, V_t) ---
                 # The current 'observation' is S_t
                 # Use scout's map to get tensor representation
-                scout_map(observation) # Update map with observation
-                map_input = scout_map.get_tensor().unsqueeze(0) # Get tensor and add batch dim
-                step_input = torch.tensor([observation['step']], dtype=torch.float32).unsqueeze(0) # Get step and add batch dim
+                agents['maps']['scout'](observation) # Update map with observation
+                map_input = agents['maps']['scout'].get_tensor().unsqueeze(0) # Get tensor and add batch dim
 
                 # Ensure tensor dtype matches model dtype (bfloat16 if enabled)
                 if args.bfloat16:
                     map_input = map_input.to(torch.bfloat16)
-                    step_input = step_input.to(torch.bfloat16)
-
+                
+                map_input = map_input.cuda()
 
                 # Get action (A_t), log_prob, value (V(S_t)) from the model
                 with torch.no_grad():
-                    action, log_prob, entropy, value = model.get_action_and_value(map_input, step_input, greedy=False)
+                    action, log_prob, entropy, value = model.get_action_and_value(map_input, greedy=False)
 
                 # Store info for this step to be finalized in the next scout turn
                 last_scout_step_info = {
                     'map_input': map_input, # Store the tensor directly
-                    'step_input': step_input, # Store the tensor directly
                     'action': action.item(),
                     'log_prob': log_prob.item(),
                     'value': value.item(),
@@ -293,43 +306,43 @@ def main(args):
                     break # End outer loop if total timesteps reached mid-episode
 
 
-                elif agent in guard_maps: # It's a guard agent
-                    # Update the guard's map with its observation
-                    # print(f"Updating map for guard {agent}") # Debugging
-                    guard_maps[agent](observation)
+            elif agent in agents['names']['guards']: # It's a guard agent
+                # Update the guard's map with its observation
+                # print(f"Updating map for guard {agent}") # Debugging
+                agents['maps']['guards'][agent](observation)
 
-                    # Get location and direction from observation
-                    location = observation.get('location')
-                    direction = observation.get('direction')
+                # Get location and direction from observation
+                location = observation.get('location')
+                direction = observation.get('direction')
 
-                    # Use the guard's pathfinder to determine action
-                    action = 0 # Default action if pathfinder fails
+                # Use the guard's pathfinder to determine action
+                action = 0 # Default action if pathfinder fails
 
-                    if location is not None and direction is not None:
-                        try:
-                            # Pass location and direction as Point and Direction enums
-                            action = int(guard_pathfinders[agent].get_optimal_action(
-                                Point(location[0], location[1]),
-                                Direction(direction)
-                                # No destination needed for default guard behavior? Or should they patrol?
-                                # Assuming default pathfinder logic finds a valid move
-                            ))
-                        except Exception as e:
-                             print(f"Error getting action for guard {agent}: {e}")
-                             action = env.action_space(agent).sample() # Fallback to random
+                if location is not None and direction is not None:
+                    try:
+                        # Pass location and direction as Point and Direction enums
+                        action = int(agents['pathfinders']['guards'][agent].get_optimal_action(
+                            Point(location[0], location[1]),
+                            Direction(direction)
+                            # No destination needed for default guard behavior? Or should they patrol?
+                            # Assuming default pathfinder logic finds a valid move
+                        ))
+                    except Exception as e:
+                         print(f"Error getting action for guard {agent}: {e}")
+                         action = env.action_space(agent).sample() # Fallback to random
 
-                    # Perform the action
-                    env.step(action)
+                # Perform the action
+                env.step(action)
 
 
-                else: # Other agents (if any, not scout or controlled guards)
-                    # Take a random action for other agents not explicitly controlled
-                    random_action = env.action_space(agent).sample()
-                    env.step(random_action)
+            else: # Other agents (if any, not scout or controlled guards)
+                # Take a random action for other agents not explicitly controlled
+                random_action = env.action_space(agent).sample()
+                env.step(random_action)
 
-                # Check if outer loop limit reached after any agent's step
-                if timesteps_elapsed >= args.timesteps:
-                    break # End agent_iter loop
+            # Check if outer loop limit reached after any agent's step
+            if timesteps_elapsed >= args.timesteps:
+                break # End agent_iter loop
 
 
             # After agent_iter loop finishes (episode ended or truncated)
@@ -337,7 +350,6 @@ def main(args):
             if last_scout_step_info is not None:
                 buffer.add(
                     map_input=last_scout_step_info['map_input'],
-                    step_input=last_scout_step_info['step_input'],
                     action=last_scout_step_info['action'],
                     log_prob=last_scout_step_info['log_prob'],
                     value=last_scout_step_info['value'],
@@ -347,59 +359,59 @@ def main(args):
                 last_scout_step_info = None # Clear for next episode
 
 
-            # --- PPO Update ---
-            # Perform training update if we have collected any scout steps in this episode
-            if not buffer.is_empty(): # Check if buffer has data
-                print(f"Collected {len(buffer)} scout steps in this episode. Performing PPO update.")
+        # --- PPO Update ---
+        # Perform training update if we have collected any scout steps in this episode
+        if not buffer.is_empty(): # Check if buffer has data
+            print(f"Collected {len(buffer)} scout steps in this episode. Performing PPO update.")
 
-                # Get batch from buffer
-                training_data = buffer.get_batch()
+            # Get batch from buffer
+            training_data = buffer.get_batch()
 
-                assert training_data, "buffer empty? how?"
+            assert training_data, "buffer empty? how?"
 
-                # Move training data to device
-                for k, v in training_data.items():
-                    if isinstance(v, torch.Tensor):
-                        training_data[k] = v.to(device)
+            # Move training data to device
+            for k, v in training_data.items():
+                if isinstance(v, torch.Tensor):
+                    training_data[k] = v.to(device)
 
-                # Perform PPO update
-                # Pass necessary arguments: model, optimizer, training_data, args
-                # The ppo_update function will handle GAE, returns, epochs, minibatches, loss calculation, and optimization steps.
-                update_losses = ppo_update(model, optimizer, training_data, args)
+            # Perform PPO update
+            # Pass necessary arguments: model, optimizer, training_data, args
+            # The ppo_update function will handle GAE, returns, epochs, minibatches, loss calculation, and optimization steps.
+            update_losses = ppo_update(model, optimizer, training_data, args)
 
-                # Step the learning rate scheduler if it exists
-                if scheduler:
-                    # Assuming stepping based on the number of environment steps processed in this update
-                    scheduler.step(len(buffer)) # Use buffer length BEFORE clearing
+            # Step the learning rate scheduler if it exists
+            if scheduler:
+                # Assuming stepping based on the number of environment steps processed in this update
+                scheduler.step(len(buffer)) # Use buffer length BEFORE clearing
 
-                # Log losses
-                print(f"Timestep {timesteps_elapsed}: Policy Loss = {update_losses['policy_loss']:.4f}, Value Loss = {update_losses['value_loss']:.4f}, Entropy = {update_losses['entropy_bonus']:.4f}, Total Loss = {update_losses['total_loss']:.4f}")
+            # Log losses
+            print(f"Timestep {timesteps_elapsed}: Policy Loss = {update_losses['policy_loss']:.4f}, Value Loss = {update_losses['value_loss']:.4f}, Entropy = {update_losses['entropy_bonus']:.4f}, Total Loss = {update_losses['total_loss']:.4f}")
 
-                # Clear batch after training (or collect multiple episodes before training)
-                buffer.clear()
+            # Clear batch after training (or collect multiple episodes before training)
+            buffer.clear()
 
-                # Perform evaluation periodically
-                # Evaluate every X timesteps or at the end of training
-                EVAL_INTERVAL = 50000 # Evaluate every 50,000 timesteps (example interval)
-                if timesteps_elapsed > start_timesteps and timesteps_elapsed % EVAL_INTERVAL < len(training_data) or timesteps_elapsed >= args.timesteps: # Check interval non-overlappingly and at the end
-                    evaluate_policy(model, env) # Run evaluation
-
-
-                # Save checkpoint
-                if timesteps_elapsed % 10000 == 0 or timesteps_elapsed >= args.timesteps: # Save periodically or at the end
-                    checkpoint_path = os.path.join(args.save_dir, 'latest.pt')
-                    torch.save({
-                        'timesteps_elapsed': timesteps_elapsed,
-                        'model_state_dict': model.state_dict(),
-                        'optimizer_state_dict': optimizer.state_dict(),
-                        'scheduler_state_dict': scheduler.state_dict() if scheduler else None, # Save scheduler state
-                    }, checkpoint_path)
-                    print(f"Checkpoint saved at {checkpoint_path}")
+            # Perform evaluation periodically
+            # Evaluate every X timesteps or at the end of training
+            EVAL_INTERVAL = 50000 # Evaluate every 50,000 timesteps (example interval)
+            if timesteps_elapsed > start_timesteps and timesteps_elapsed % EVAL_INTERVAL < len(training_data) or timesteps_elapsed >= args.timesteps: # Check interval non-overlappingly and at the end
+                evaluate_policy(model, env) # Run evaluation
 
 
-            # Check if total timesteps reached (redundant check due to break inside loop, but harmless)
-            # if timesteps_elapsed >= args.timesteps:
-            #     pass # Exit main loop
+            # Save checkpoint
+            if timesteps_elapsed % 10000 == 0 or timesteps_elapsed >= args.timesteps: # Save periodically or at the end
+                checkpoint_path = os.path.join(args.save_dir, 'latest.pt')
+                torch.save({
+                    'timesteps_elapsed': timesteps_elapsed,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'scheduler_state_dict': scheduler.state_dict() if scheduler else None, # Save scheduler state
+                }, checkpoint_path)
+                print(f"Checkpoint saved at {checkpoint_path}")
+
+
+        # Check if total timesteps reached (redundant check due to break inside loop, but harmless)
+        # if timesteps_elapsed >= args.timesteps:
+        #     pass # Exit main loop
 
 
     print("Training finished.")
@@ -430,22 +442,8 @@ def evaluate_policy(model: torch.nn.Module, env, num_episodes: int = 10, seed: O
         # Use a separate seed or offset the training seed
         current_seed = seed if seed is not None else 1000000 + episode # Use high seed to avoid overlap
         env.reset(seed=current_seed)
-
-        scout_map = Map()
-        guard_maps = {}
-        guard_pathfinders = {}
-
-        guards = [a for a in env.agents if a != env.scout]
-
-        for guard_agent in guards:
-            guard_maps[guard_agent] = Map()
-            guard_pathfinders[guard_agent] = Pathfinder(
-                guard_maps[guard_agent],
-                PathfinderConfig(
-                    use_viewcone=False,
-                    use_path_density=False
-                )
-            )
+        
+        agents = init_agents(env)
 
         episode_reward = 0
         episode_ended = False
@@ -461,23 +459,20 @@ def evaluate_policy(model: torch.nn.Module, env, num_episodes: int = 10, seed: O
             # Only get action for scout or guards
             if agent == env.scout:
                 # Update scout's map and get tensor
-                scout_map(observation)
-                map_input = scout_map.get_tensor().unsqueeze(0)
-                step_input = torch.tensor([observation['step']], dtype=torch.float32).unsqueeze(0)
+                agents['maps']['scout'](observation)
+                map_input = agents['maps']['scout'].get_tensor().unsqueeze(0)
 
                 # Ensure tensor dtype matches model dtype (bfloat16 if enabled)
                 # Assuming model.dtype is the correct dtype for inputs
                 model_dtype = next(model.parameters()).dtype
                 if map_input.dtype != model_dtype:
                      map_input = map_input.to(model_dtype)
-                if step_input.dtype != model_dtype:
-                     step_input = step_input.to(model_dtype)
 
 
                 # Get action from the model using greedy policy (no gradients)
                 with torch.no_grad():
                      # Use greedy=True for evaluation
-                     action, _, _, _ = model.get_action_and_value(map_input, step_input, greedy=True)
+                     action, _, _, _ = model.get_action_and_value(map_input, greedy=True)
 
                 # Step environment with scout action
                 env.step(action.item())

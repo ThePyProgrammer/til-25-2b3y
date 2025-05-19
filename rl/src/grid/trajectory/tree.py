@@ -111,7 +111,7 @@ class TrajectoryTree:
         if len(self.edge_trajectories) < 16:
             self.edge_trajectories = self.trajectories.copy()
         old_edge_trajectories = self.edge_trajectories
-        print(f"Updating from {len(old_edge_trajectories)} trajectories")
+        # print(f"Updating from {len(old_edge_trajectories)} trajectories")
         self.edge_trajectories = []  # Clear edge trajectories for this step
 
         # Mark all edge trajectories as discarded initially
@@ -180,7 +180,7 @@ class TrajectoryTree:
                 self.registry,
             )
 
-            print(f"Fit {len(self.trajectories)} trajectories to visited points.")
+            # print(f"Fit {len(self.trajectories)} trajectories to visited points.")
 
             self.trajectories = fast_forward_trajectories(
                 self.trajectories,
@@ -415,13 +415,13 @@ class TrajectoryTree:
             if tile.is_empty:  # Newly discovered visited/empty tile
                 self.ambiguous_tiles.add(position)
 
-    def debug_ambiguous_tiles(self):
-        """Print debug information about ambiguous tiles."""
-        print(f"Has reset: {self.has_reset}")
-        print(f"Number of ambiguous tiles: {len(self.ambiguous_tiles)}")
-        if self.ambiguous_tiles:
-            print(f"Ambiguous tile positions: {sorted(self.ambiguous_tiles)}")
-        print(f"Number of trajectories: {len(self.trajectories)}")
+    # def debug_ambiguous_tiles(self):
+    #     """Print debug information about ambiguous tiles."""
+    #     print(f"Has reset: {self.has_reset}")
+    #     print(f"Number of ambiguous tiles: {len(self.ambiguous_tiles)}")
+    #     if self.ambiguous_tiles:
+    #         print(f"Ambiguous tile positions: {sorted(self.ambiguous_tiles)}")
+    #     print(f"Number of trajectories: {len(self.trajectories)}")
 
     def _prune_by_tile_content(self, information: list[tuple[Point, Tile]]):
         """Prune trajectories based on tile content."""
