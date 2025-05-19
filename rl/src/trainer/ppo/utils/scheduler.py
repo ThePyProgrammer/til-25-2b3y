@@ -1,7 +1,8 @@
+from typing import Any
+
 import torch
 import torch.optim.lr_scheduler as lr_scheduler
 import torch.optim as optim
-from typing import Any
 
 def create_scheduler(optimizer: optim.Optimizer, args: Any, total_steps: int):
     """
@@ -87,7 +88,7 @@ if __name__ == '__main__':
 
     # Example of stepping a scheduler
     if scheduler_cosine:
-         print("\\nStepping Cosine scheduler:")
+         print("\nStepping Cosine scheduler:")
          initial_lr = dummy_optimizer.param_groups[0]['lr']
          print(f"Initial LR: {initial_lr}")
          for step in range(10):
@@ -98,7 +99,7 @@ if __name__ == '__main__':
     # Reset optimizer LR for linear test
     dummy_optimizer.param_groups[0]['lr'] = args_linear.lr
     if scheduler_linear:
-         print("\\nStepping Linear scheduler:")
+         print("\nStepping Linear scheduler:")
          initial_lr = dummy_optimizer.param_groups[0]['lr']
          print(f"Initial LR: {initial_lr}")
          for step in range(10):

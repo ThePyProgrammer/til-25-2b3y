@@ -100,10 +100,10 @@ def ppo_update(model: torch.nn.Module, optimizer: optim.Optimizer, data: Dict[st
     # Inputs (map, step) are assumed to be already in the correct dtype from buffer
     # Convert other tensors needed for calculations
     if args.bfloat16:
-         b_log_probs_old = b_log_probs_old.to(torch.bfloat16)
-         b_values_old = b_values_old.to(torch.bfloat16)
-         b_rewards = b_rewards.to(torch.bfloat16)
-         b_dones = b_dones.to(torch.bfloat16) # Use bfloat16 for done flags in calculations
+        b_log_probs_old = b_log_probs_old.to(torch.bfloat16)
+        b_values_old = b_values_old.to(torch.bfloat16)
+        b_rewards = b_rewards.to(torch.bfloat16)
+        b_dones = b_dones.to(torch.bfloat16) # Use bfloat16 for done flags in calculations
 
     # Calculate advantages and returns
     advantages, returns = calculate_gae_returns(
