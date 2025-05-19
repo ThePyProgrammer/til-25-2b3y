@@ -57,7 +57,7 @@ class PPODiscretePolicy(nn.Module):
 
         return log_probs, entropy
 
-    def sample_action(self, x, greedy=False):
+    def sample_action(self, x, deterministic=False):
         """
         Sample an action from the policy.
 
@@ -72,7 +72,7 @@ class PPODiscretePolicy(nn.Module):
         """
         dist = self.get_distribution(x)
 
-        if greedy:
+        if deterministic:
             action = torch.argmax(dist.probs, dim=-1)
         else:
             action = dist.sample()
@@ -175,7 +175,7 @@ class PPOActorCritic(nn.Module):
         self,
         map_input,
         action=None,
-        greedy=False
+        deterministic=False
     ):
         """
         Forward pass to get action, log probability, entropy, and value.
@@ -207,7 +207,7 @@ class PPOActorCritic(nn.Module):
         if action is None:
             action, log_prob, entropy = self.actor.sample_action(
                 actor_embedding,
-                greedy=greedy
+                deterministic=deterministic
             )
         else:
             dist = self.actor.get_distribution(actor_embedding)
