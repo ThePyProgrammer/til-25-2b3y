@@ -21,12 +21,12 @@ from trainer.ppo.utils.scheduler import create_scheduler
 REWARDS_DICT = {
     RewardNames.GUARD_CAPTURES: 10,
     RewardNames.SCOUT_CAPTURED: -10,
-    RewardNames.SCOUT_RECON: 0.5,
+    RewardNames.SCOUT_RECON: 0.2,
     RewardNames.SCOUT_MISSION: 1,
-    RewardNames.WALL_COLLISION: -1,
-    RewardNames.SCOUT_TRUNCATION: 5,
+    RewardNames.WALL_COLLISION: -2,
+    RewardNames.SCOUT_TRUNCATION: 2.5,
     RewardNames.STATIONARY_PENALTY: -1,
-    RewardNames.SCOUT_STEP: 0.2
+    # RewardNames.SCOUT_STEP: 0.2
 }
 
 def main(args):
@@ -49,9 +49,11 @@ def main(args):
         action_dim=ACTION_DIM,
         map_size=MAP_SIZE,
         channels=CHANNELS,
+        hidden_dims=[128, 128, 128],
         encoder_type="large",
         shared_encoder=False,
-        device=device
+        device=device,
+        use_center_only=True,
     )
 
     # Apply precision setting

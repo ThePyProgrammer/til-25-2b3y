@@ -177,7 +177,6 @@ class Map:
 
         return walls
 
-
     def get_tiles(self) -> list[list[Tile]]:
         """
         Extract tile type information (empty, recon, mission) from the map.
@@ -386,7 +385,7 @@ class Map:
             position = Point(position[0], position[1])
 
         # Create a trajectory tree with the current map's registry
-        tree = TrajectoryTree(position, direction, self.size, registry=self.registry)
+        tree = TrajectoryTree(self, position, direction, self.size, registry=self.registry)
 
         self.trees.append(tree)
 

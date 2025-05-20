@@ -1,9 +1,11 @@
 import random
 
+import torch
+
 from grid.map import Map
-from grid.utils import Point
+from grid.node import DirectionalNode
+from grid.utils import Point, Action, Direction
 from grid.pathfinder import Pathfinder, PathfinderConfig
-from grid.map import Direction
 
 
 def init_agents(env, num_guards):
@@ -76,7 +78,9 @@ def process_scout_step(agent, observation, reward, termination, truncation, agen
     # --- Finalize previous scout step (if exists) using info from env.last() ---
     # observation is S_t
     # reward, termination, truncation are R_{t-1}, done_{t-1} for the scout's previous step
+    previous_action = None
     if last_scout_step_info is not None:
+        previous_action = last_scout_step_info['action']
         # S_{t-1}, A_{t-1}, log_prob_{t-1}, V_{t-1} are in last_scout_step_info
         # R_{t-1}, done_{t-1} are available now from env.last()
         buffer.add(
@@ -95,31 +99,51 @@ def process_scout_step(agent, observation, reward, termination, truncation, agen
     agents['maps']['scout'](observation)  # Update map with observation
     map_input = agents['maps']['scout'].get_tensor().unsqueeze(0)  # Get tensor and add batch dim
 
+    location = observation["location"]
+    position = Point(int(location[0]), int(location[1]))
+    direction = Direction(observation["direction"])
+    node: DirectionalNode = agents['maps']['scout'].get_node(position, direction)
+    valid_actions = set(node.children.keys())
+
     # Ensure tensor dtype matches model dtype (bfloat16 if enabled)
-    import torch
     if args.bfloat16:
         map_input = map_input.to(torch.bfloat16)
 
     map_input = map_input.to(device)
 
     # Get action (A_t), log_prob, value (V(S_t)) from the model
-    with torch.no_grad():
-        action, log_prob, entropy, value = model.get_action_and_value(map_input, deterministic=False)
+    action = None
+    new_last_scout_step_info = {}
 
-    # Store info for this step to be finalized in the next scout turn
-    new_last_scout_step_info = {
-        'map_input': map_input,  # Store the tensor directly
-        'action': action.item(),
-        'log_prob': log_prob.item(),
-        'value': value.item(),
-    }
+    while action is None or (
+        action == previous_action
+        and previous_action in [Action.LEFT, Action.RIGHT]
+        and args.prevent_180_turns
+    ) or (
+        action not in valid_actions
+        and args.prevent_invalid_actions
+    ):
+        with torch.no_grad():
+            action, log_prob, entropy, value = model.get_action_and_value(map_input, deterministic=False)
+
+        # Store info for this step to be finalized in the next scout turn
+        new_last_scout_step_info = {
+            'map_input': map_input,  # Store the tensor directly
+            'action': action.item(),
+            'log_prob': log_prob.item(),
+            'value': value.item(),
+        }
+
+        action = action.item()
+
+    assert new_last_scout_step_info
 
     # Timestep increment
     timestep_increment = 1
 
-    return new_last_scout_step_info, action.item(), timestep_increment
+    return new_last_scout_step_info, action, timestep_increment
 
-def process_guard_step(agent, observation, agents, env):
+def process_guard_step(agent, observation, agents, env, args):
     """
     Process a step for a guard agent
 
@@ -144,13 +168,14 @@ def process_guard_step(agent, observation, agents, env):
 
     if location is not None and direction is not None:
         try:
-            # Pass location and direction as Point and Direction enums
-            action = int(agents['pathfinders']['guards'][agent].get_optimal_action(
-                Point(location[0], location[1]),
-                Direction(direction)
-                # No destination needed for default guard behavior? Or should they patrol?
-                # Assuming default pathfinder logic finds a valid move
-            ))
+            if random.random() < args.guards_difficulty:
+                # Pass location and direction as Point and Direction enums
+                action = int(agents['pathfinders']['guards'][agent].get_optimal_action(
+                    Point(location[0], location[1]),
+                    Direction(direction)
+                ))
+            else:
+                action = env.action_space(agent).sample()  # Fallback to random
         except Exception as e:
             print(f"Error getting action for guard {agent}: {e}")
             action = env.action_space(agent).sample()  # Fallback to random

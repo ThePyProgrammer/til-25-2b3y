@@ -4,7 +4,7 @@ import torch.optim as optim
 from networks.ppo import PPOActorCritic
 
 
-def initialize_model(action_dim, map_size, channels, encoder_type="large", shared_encoder=False, device=None):
+def initialize_model(action_dim, map_size, channels, hidden_dims = [512, 512], encoder_type="large", shared_encoder=False, device=None, **kwargs):
     """
     Initialize the PPO model
 
@@ -25,6 +25,7 @@ def initialize_model(action_dim, map_size, channels, encoder_type="large", share
         channels=channels,
         encoder_type=encoder_type,
         shared_encoder=shared_encoder,
+        encoder_kwargs=kwargs
     )
 
     if device is not None:

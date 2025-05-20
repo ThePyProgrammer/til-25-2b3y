@@ -2,9 +2,7 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.distributions import Categorical
-import numpy as np
 
 from .encoder import create_encoder
 
@@ -13,7 +11,7 @@ class PPODiscretePolicy(nn.Module):
     """Policy network for discrete action spaces in PPO algorithm."""
 
     def __init__(self, embedding_dim: int, action_dim: int, hidden_dims: list[int] = [256]):
-        super(PPODiscretePolicy, self).__init__()
+        super().__init__()
 
         # Build policy network
         layers = []
@@ -87,7 +85,7 @@ class PPOValueNetwork(nn.Module):
     """Value network (critic) for PPO algorithm."""
 
     def __init__(self, embedding_dim: int, hidden_dims: list[int] = [256]):
-        super(PPOValueNetwork, self).__init__()
+        super().__init__()
 
         # Build value network
         layers = []

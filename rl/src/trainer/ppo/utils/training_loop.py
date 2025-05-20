@@ -15,8 +15,7 @@ def train_episode(
     device,
     last_scout_step_info,
     timesteps_elapsed,
-    steps_since_save,
-    episodes_since_update
+    steps_since_save
 ):
     """
     Run a single training episode
@@ -33,7 +32,6 @@ def train_episode(
         last_scout_step_info: Info about the last scout step
         timesteps_elapsed: Current timestep count
         steps_since_save: Steps since the last checkpoint save
-        episodes_since_update: Episodes since the last PPO update
 
     Returns:
         tuple: (updated last_scout_step_info, updated timesteps_elapsed,
@@ -58,7 +56,6 @@ def train_episode(
         if termination or truncation:
             reward = env.rewards[env.scout]
             scout_reward += reward
-            episodes_since_update += 1
 
             # If the scout had an unfinished step when the episode ended,
             # finalize it with the final reward/done
@@ -96,7 +93,7 @@ def train_episode(
 
         elif agent in agents['names']['guards']:
             # Process guard step
-            action = process_guard_step(agent, observation, agents, env)
+            action = process_guard_step(agent, observation, agents, env, args)
             env.step(action)
 
         else:
@@ -114,7 +111,7 @@ def train_episode(
 
     should_continue = timesteps_elapsed < args.timesteps
     return (last_scout_step_info, timesteps_elapsed, steps_since_save,
-            episodes_since_update, scout_reward, should_continue)
+            scout_reward, should_continue)
 
 def update_model(buffer, model, optimizer, scheduler, args, device):
     """
@@ -175,6 +172,7 @@ def train(env, model, optimizer, scheduler, buffer, args):
     last_scout_step_info = None
     steps_since_save = 0
     episodes_since_update = 0
+    episodes_in_buffer = 0
     timesteps_elapsed = 0  # Will be overridden if resuming
 
     # Main training loop
@@ -184,7 +182,6 @@ def train(env, model, optimizer, scheduler, buffer, args):
             last_scout_step_info,
             timesteps_elapsed,
             steps_since_save,
-            episodes_since_update,
             scout_reward,
             should_continue
         ) = train_episode(
@@ -197,9 +194,11 @@ def train(env, model, optimizer, scheduler, buffer, args):
             device,
             last_scout_step_info,
             timesteps_elapsed,
-            steps_since_save,
-            episodes_since_update
+            steps_since_save
         )
+
+        episodes_since_update += 1
+        episodes_in_buffer += 1
 
         # Perform PPO update if enough episodes have been collected
         if not buffer.is_empty() and episodes_since_update >= args.episodes_per_update:
@@ -215,8 +214,9 @@ def train(env, model, optimizer, scheduler, buffer, args):
                  f"Entropy = {update_losses['entropy_bonus']:.4f}, "
                  f"Total Loss = {update_losses['total_loss']:.4f}")
 
-            # Clear buffer after training
-            buffer.clear()
+            if episodes_in_buffer >= args.episodes_in_buffer:
+                # Clear buffer after training
+                buffer.clear()
 
             # Save checkpoint if needed
             if steps_since_save > args.save_interval or timesteps_elapsed >= args.timesteps:

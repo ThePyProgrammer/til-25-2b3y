@@ -17,6 +17,7 @@ from utils.profiler import start_profiling, stop_profiling
 class TrajectoryTree:
     def __init__(
         self,
+        map,
         init_position: Point,
         init_direction: Optional[Direction] = None,
         size: int = 16,
@@ -37,6 +38,7 @@ class TrajectoryTree:
                                If True, trajectories with same position but different directions are considered distinct.
                                If False, only position matters, reducing the number of trajectories (default: True)
         """
+        self.map = map
         self.size = size
         self.consider_direction = consider_direction
         self.regenerate_edge_threshold = regenerate_edge_threshold
@@ -236,6 +238,10 @@ class TrajectoryTree:
 
         # Normalize to get probability density
         total = density.sum()
+        if total == 0:
+            density = self.map.time_since_update
+            total = density.sum()
+
         if total > 0:
             density = density / total
 

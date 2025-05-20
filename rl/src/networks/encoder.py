@@ -67,7 +67,8 @@ class MapEncoder(nn.Module):
         fc_layers: list[int] = [512],
         use_batch_norm: bool = False,
         dropout_rate: float = 0.0,
-        use_layer_norm: bool = True
+        use_layer_norm: bool = True,
+        use_center_only: bool = False
     ):
         super().__init__()
 
@@ -101,8 +102,17 @@ class MapEncoder(nn.Module):
             current_size -= 2
             current_size = current_size // stride if stride > 1 else current_size
 
+        # Record final spatial size for center extraction if needed
+        self.final_spatial_size = current_size
+
+        # Whether to use only the center feature instead of flattening
+        self.use_center_only = use_center_only
+
         # Calculate flattened size after convolutions
-        self.flattened_size = conv_layers[-1] * current_size * current_size
+        if use_center_only:
+            self.flattened_size = conv_layers[-1]  # Only center point features
+        else:
+            self.flattened_size = conv_layers[-1] * current_size * current_size
 
         # Build fully connected layers
         self.fc_blocks = nn.ModuleList()
@@ -134,7 +144,8 @@ class MapEncoder(nn.Module):
             'final_spatial_size': current_size,
             'use_batch_norm': use_batch_norm,
             'use_layer_norm': use_layer_norm,
-            'dropout_rate': dropout_rate
+            'dropout_rate': dropout_rate,
+            'use_center_only': use_center_only
         }
 
     def get_config(self):
@@ -156,8 +167,14 @@ class MapEncoder(nn.Module):
         for block in self.conv_blocks:
             x = block(x)
 
-        # Flatten spatial features
-        x = x.view(-1, self.flattened_size)
+        # Process spatial features
+        if self.use_center_only:
+            # Only take the center feature
+            center_idx = self.final_spatial_size // 2
+            x = x[:, :, center_idx, center_idx]  # Shape: [batch_size, channels]
+        else:
+            # Flatten all spatial features
+            x = x.view(-1, self.flattened_size)
 
         # Process through FC blocks
         for layer in self.fc_blocks:
@@ -174,36 +191,38 @@ class MapEncoder(nn.Module):
 class SmallMapEncoder(MapEncoder):
     """Smaller variant optimized for CPU inference."""
 
-    def __init__(self, map_size=16, channels=12, embedding_dim=256):
+    def __init__(self, map_size=16, channels=12, embedding_dim=256, use_center_only=False):
         super().__init__(
             map_size=map_size,
             channels=channels,
             embedding_dim=embedding_dim,
             conv_layers=[32, 64, 64],
-            kernel_sizes=[5, 3, 3],  # Larger initial kernel to capture more context
-            strides=[2, 2, 2],       # More aggressive downsampling
-            fc_layers=[256],         # Smaller FC layer
-            use_batch_norm=False,    # Skip batch norm for CPU efficiency
-            dropout_rate=0.0,        # Skip dropout for inference speed
-            use_layer_norm=True      # Keep layer norm for stability
+            kernel_sizes=[3, 3, 3],  # Larger initial kernel to capture more context
+            strides=[1, 1, 1],       # More aggressive downsampling
+            fc_layers=[64],          # Smaller FC layer
+            use_batch_norm=True,     # Skip batch norm for CPU efficiency
+            dropout_rate=0.1,        # Skip dropout for inference speed
+            use_layer_norm=True,     # Keep layer norm for stability
+            use_center_only=use_center_only
         )
 
 
 class LargeMapEncoder(MapEncoder):
     """Larger variant for more complex environments."""
 
-    def __init__(self, map_size=16, channels=12, embedding_dim=256):
+    def __init__(self, map_size=16, channels=12, embedding_dim=256, use_center_only=False):
         super().__init__(
             map_size=map_size,
             channels=channels,
             embedding_dim=embedding_dim,
-            conv_layers=[32, 32, 64, 64, 128, 128, 256, 256],
-            kernel_sizes=[3, 3, 3, 3, 3, 3, 3, 3],
-            strides=[1, 1, 1, 1, 1, 1, 1, 1],
-            fc_layers=[1024, 512],
+            conv_layers=[64, 64, 128, 256, 256, 512],
+            kernel_sizes=[3, 3, 3, 3, 3, 3],
+            strides=[1, 1, 1, 1, 1, 1],
+            fc_layers=[512],
             use_batch_norm=True,
-            dropout_rate=0.2,
-            use_layer_norm=True
+            dropout_rate=0.1,
+            use_layer_norm=True,
+            use_center_only=use_center_only
         )
 
 
@@ -235,7 +254,9 @@ if __name__ == "__main__":
             strides=[2, 2, 2],
             fc_layers=[128],
             use_batch_norm=False
-        )
+        ),
+        "center_only": create_encoder(use_center_only=True),
+        "small_center_only": create_encoder("small", use_center_only=True)
     }
 
     # Simple benchmark

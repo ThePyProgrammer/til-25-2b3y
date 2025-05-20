@@ -15,6 +15,7 @@ def parse_args():
     parser.add_argument('--timesteps', type=int, default=1_000_000, help='total timesteps to train')
     parser.add_argument('--batch_size', type=int, default=64, help='mini-batch size for PPO update')
     parser.add_argument('--episodes_per_update', type=int, default=1, help='number of episodes to collect before PPO update')
+    parser.add_argument('--episodes_in_buffer', type=int, default=1, help='number of episodes to accumulate before clearing')
 
     parser.add_argument('--lr', type=float, default=3e-4, help='learning rate')
     parser.add_argument('--optim', type=str, default='adam', choices=['sgd', 'adam', 'adamw'], help='optimizer')
@@ -28,7 +29,11 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=42, help='random seed')
     parser.add_argument('--env_id', type=str, default='gridworld', help='environment id') # Keep flexibility for different envs
     parser.add_argument('--render', action='store_true', help='render environment during training')
+
     parser.add_argument('--num_guards', type=int, default=3, help='number of guards')
+    parser.add_argument('--guards_difficulty', type=float, default=1.0, help='1.0 means no random behaviours, 0.0 means all random behaviours')
+    parser.add_argument('--prevent_180_turns', action='store_true', help='prevent the scout from making 180 turns (it can just move in that direction forwards/backwards')
+    parser.add_argument('--prevent_invalid_actions', action='store_true', help='prevent the scout from taking invalid actions (colliding into walls)')
 
     args = parser.parse_args()
 
