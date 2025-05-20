@@ -1,6 +1,7 @@
 import argparse
 import os
 
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a PPO agent for the scout.')
 

@@ -1,8 +1,10 @@
 import random
+
 from grid.map import Map
 from grid.utils import Point
 from grid.pathfinder import Pathfinder, PathfinderConfig
 from grid.map import Direction
+
 
 def init_agents(env, num_guards):
     """

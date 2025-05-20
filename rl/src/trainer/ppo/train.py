@@ -7,6 +7,8 @@ import torch
 sys.path.append(str(pathlib.Path(os.getcwd()).parent.parent.resolve() / "til-25-environment"))
 sys.path.append(str(pathlib.Path(os.getcwd()).resolve()))
 
+from til_environment.types import RewardNames
+
 # Import utility modules
 from trainer.ppo.utils.args import parse_args
 from trainer.ppo.utils.environment import setup_environment, set_seeds, get_scout_initial_observation, extract_observation_shape
@@ -16,8 +18,17 @@ from trainer.ppo.utils.training_loop import train
 from trainer.ppo.utils.buffer import ExperienceBuffer
 from trainer.ppo.utils.scheduler import create_scheduler
 
-# Main function definition below
 
+REWARDS_DICT = {
+    RewardNames.GUARD_CAPTURES: 1,
+    RewardNames.SCOUT_CAPTURED: -1,
+    RewardNames.SCOUT_RECON: 0.05,
+    RewardNames.SCOUT_MISSION: 0.1,
+    RewardNames.WALL_COLLISION: -0.1,
+    RewardNames.SCOUT_TRUNCATION: 0.5,
+    RewardNames.STATIONARY_PENALTY: -0.1,
+    RewardNames.SCOUT_STEP: 0.05
+}
 
 def main(args):
     # Set device
@@ -28,7 +39,7 @@ def main(args):
     set_seeds(args.seed)
 
     # Set up environment
-    env = setup_environment(args)
+    env = setup_environment(args, REWARDS_DICT)
 
     # Initialize agents
     agents = init_agents(env, args.num_guards)

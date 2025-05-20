@@ -3,6 +3,7 @@ import torch
 import torch.optim as optim
 from networks.ppo import PPOActorCritic
 
+
 def initialize_model(action_dim, map_size, channels, encoder_type="large", shared_encoder=False, device=None):
     """
     Initialize the PPO model

@@ -1,7 +1,8 @@
+from typing import Dict, Any
+
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
-from typing import Dict, Any
 
 
 def calculate_gae_returns(rewards: torch.Tensor, values: torch.Tensor, dones: torch.Tensor, gamma: float, gae_lambda: float) -> tuple[torch.Tensor, torch.Tensor]:

@@ -9,20 +9,9 @@ sys.path.append(str(pathlib.Path(os.getcwd()).parent.parent.resolve() / "til-25-
 sys.path.append(str(pathlib.Path(os.getcwd()).resolve()))
 
 from til_environment import gridworld
-from til_environment.types import RewardNames
 
-# Default rewards dictionary used for training
-DEFAULT_REWARDS_DICT = {
-    RewardNames.GUARD_CAPTURES: 1,
-    RewardNames.SCOUT_CAPTURED: -1,
-    RewardNames.SCOUT_RECON: 0.02,
-    RewardNames.SCOUT_MISSION: 0.1,
-    RewardNames.WALL_COLLISION: -0.05,
-    RewardNames.SCOUT_TRUNCATION: 1,
-    RewardNames.STATIONARY_PENALTY: -0.05
-}
 
-def setup_environment(args, rewards_dict=None):
+def setup_environment(args, rewards_dict):
     """
     Initialize and setup the gridworld environment
 
@@ -33,9 +22,6 @@ def setup_environment(args, rewards_dict=None):
     Returns:
         env: Initialized gridworld environment
     """
-    if rewards_dict is None:
-        rewards_dict = DEFAULT_REWARDS_DICT
-
     # Create environment
     env = gridworld.env(
         env_wrappers=[],  # clear out default env wrappers
