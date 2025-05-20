@@ -22,13 +22,14 @@ def parse_args():
     parser.add_argument('--sched', type=str, default='none', help='learning rate scheduler (none, cosine, linear, etc.) - not implemented yet')
     parser.add_argument('--bfloat16', action='store_true', help='use bfloat16 for training')
 
-    parser.add_argument('--resume', action='store_true', help='resume training from save_dir')
-    parser.add_argument('--save_dir', type=str, default='./ppo_scout_train', help='directory to save model and logs')
+    parser.add_argument('--resume_from', type=str, help='resume training from save state')
+    parser.add_argument('--save_dir', type=str, default='./models', help='directory to save model and logs')
     parser.add_argument('--save_interval', type=int, default=5000, help='saving interval')
 
     parser.add_argument('--seed', type=int, default=42, help='random seed')
     parser.add_argument('--env_id', type=str, default='gridworld', help='environment id') # Keep flexibility for different envs
     parser.add_argument('--render', action='store_true', help='render environment during training')
+    parser.add_argument('--experiment_name', type=str, default='ppo', help='experiment name')
 
     parser.add_argument('--num_guards', type=int, default=3, help='number of guards')
     parser.add_argument('--guards_difficulty', type=float, default=1.0, help='1.0 means no random behaviours, 0.0 means all random behaviours')

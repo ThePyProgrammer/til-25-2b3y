@@ -25,6 +25,8 @@ def initialize_model(action_dim, map_size, channels, hidden_dims = [512, 512], e
         channels=channels,
         encoder_type=encoder_type,
         shared_encoder=shared_encoder,
+        actor_hidden_dims=hidden_dims,
+        critic_hidden_dims=hidden_dims,
         encoder_kwargs=kwargs
     )
 
@@ -57,7 +59,7 @@ def initialize_optimizer(model, optimizer_name, learning_rate):
 
     return optimizer
 
-def save_checkpoint(model, optimizer, scheduler, timesteps_elapsed, save_dir, filename='latest.pt'):
+def save_checkpoint(model, optimizer, scheduler, timesteps_elapsed, save_dir, experiment_name):
     """
     Save a checkpoint of the model, optimizer, and scheduler state
 
@@ -75,7 +77,7 @@ def save_checkpoint(model, optimizer, scheduler, timesteps_elapsed, save_dir, fi
     # Ensure save directory exists
     os.makedirs(save_dir, exist_ok=True)
 
-    checkpoint_path = os.path.join(save_dir, filename)
+    checkpoint_path = os.path.join(save_dir, f"{experiment_name}_{timesteps_elapsed}.pt")
     torch.save({
         'timesteps_elapsed': timesteps_elapsed,
         'model_state_dict': model.state_dict(),

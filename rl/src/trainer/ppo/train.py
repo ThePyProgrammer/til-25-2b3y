@@ -17,15 +17,17 @@ from trainer.ppo.utils.training_loop import train
 from trainer.ppo.utils.buffer import ExperienceBuffer
 from trainer.ppo.utils.scheduler import create_scheduler
 
+from utils import count_parameters
+
 
 REWARDS_DICT = {
     RewardNames.GUARD_CAPTURES: 10,
     RewardNames.SCOUT_CAPTURED: -10,
     RewardNames.SCOUT_RECON: 0.2,
     RewardNames.SCOUT_MISSION: 1,
-    RewardNames.WALL_COLLISION: -2,
-    RewardNames.SCOUT_TRUNCATION: 2.5,
-    RewardNames.STATIONARY_PENALTY: -1,
+    RewardNames.WALL_COLLISION: -0.4,
+    # RewardNames.SCOUT_TRUNCATION: 2.5,
+    RewardNames.STATIONARY_PENALTY: -0.4,
     # RewardNames.SCOUT_STEP: 0.2
 }
 
@@ -49,12 +51,14 @@ def main(args):
         action_dim=ACTION_DIM,
         map_size=MAP_SIZE,
         channels=CHANNELS,
-        hidden_dims=[128, 128, 128],
-        encoder_type="large",
+        hidden_dims=[32, 32, 32],
+        encoder_type="small",
         shared_encoder=False,
         device=device,
         use_center_only=True,
     )
+
+    print(f"Model has {count_parameters(model):,} parameters")
 
     # Apply precision setting
     model = apply_model_precision(model, args.bfloat16)
@@ -67,8 +71,8 @@ def main(args):
 
     # Resume training if requested
     start_timesteps = 0
-    if args.resume:
-        checkpoint_path = os.path.join(args.save_dir, 'latest.pt')
+    if args.resume_from:
+        checkpoint_path = os.path.join(args.save_dir, args.resume_from)
         start_timesteps, success = load_checkpoint(checkpoint_path, model, optimizer, scheduler)
 
     # Initialize experience buffer

@@ -482,9 +482,9 @@ class Map:
 
         # import matplotlib.pyplot as plt
 
-        # tensor[3][15][15] = 0.5
+        # tensor[2][15][15] = 0.5
 
-        # plt.imshow(tensor[3])
+        # plt.imshow(tensor[2])
         # plt.show()
 
         return tensor

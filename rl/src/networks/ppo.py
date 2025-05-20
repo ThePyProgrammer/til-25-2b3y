@@ -19,7 +19,7 @@ class PPODiscretePolicy(nn.Module):
 
         for hidden_dim in hidden_dims:
             layers.append(nn.Linear(in_dim, hidden_dim))
-            layers.append(nn.ReLU())
+            layers.append(nn.Tanh())
             in_dim = hidden_dim
 
         # Final layer for action logits
@@ -93,7 +93,7 @@ class PPOValueNetwork(nn.Module):
 
         for hidden_dim in hidden_dims:
             layers.append(nn.Linear(in_dim, hidden_dim))
-            layers.append(nn.ReLU())
+            layers.append(nn.Tanh())
             in_dim = hidden_dim
 
         # Final layer for value output

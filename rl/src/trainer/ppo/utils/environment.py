@@ -10,6 +10,8 @@ sys.path.append(str(pathlib.Path(os.getcwd()).resolve()))
 
 from til_environment import gridworld
 
+from utils.wrapper import CustomDictWrapper
+
 
 def setup_environment(args, rewards_dict):
     """
@@ -24,7 +26,7 @@ def setup_environment(args, rewards_dict):
     """
     # Create environment
     env = gridworld.env(
-        env_wrappers=[],  # clear out default env wrappers
+        env_wrappers=[CustomDictWrapper],  # clear out default env wrappers
         render_mode="human" if args.render else None,  # Render the map if requested
         debug=False,  # Enable debug mode
         novice=False,  # Use same map layout every time (for Novice teams only)

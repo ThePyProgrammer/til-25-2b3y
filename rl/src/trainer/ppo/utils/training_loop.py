@@ -223,8 +223,12 @@ def train(env, model, optimizer, scheduler, buffer, args):
             if steps_since_save > args.save_interval or timesteps_elapsed >= args.timesteps:
                 steps_since_save = 0
                 checkpoint_path = save_checkpoint(
-                    model, optimizer, scheduler,
-                    timesteps_elapsed, args.save_dir
+                    model,
+                    optimizer,
+                    scheduler,
+                    timesteps_elapsed,
+                    args.save_dir,
+                    args.experiment_name
                 )
                 print(f"Checkpoint saved at {checkpoint_path}")
 
