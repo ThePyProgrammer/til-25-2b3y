@@ -25,6 +25,7 @@ def parse_args():
     parser.add_argument('--resume_from', type=str, help='resume training from save state')
     parser.add_argument('--save_dir', type=str, default='./models', help='directory to save model and logs')
     parser.add_argument('--save_interval', type=int, default=5000, help='saving interval')
+    parser.add_argument('--eval_interval', type=int, default=10000, help='evaluation interval')
 
     parser.add_argument('--seed', type=int, default=42, help='random seed')
     parser.add_argument('--env_id', type=str, default='gridworld', help='environment id') # Keep flexibility for different envs

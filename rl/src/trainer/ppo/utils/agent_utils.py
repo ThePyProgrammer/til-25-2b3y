@@ -54,8 +54,19 @@ def init_agents(env, num_guards):
         }
     }
 
-def process_scout_step(agent, observation, reward, termination, truncation, agents,
-                       model, device, buffer, last_scout_step_info, args):
+def process_scout_step(
+    agent,
+    observation,
+    reward,
+    termination,
+    truncation,
+    agents,
+    model,
+    device,
+    buffer,
+    last_scout_step_info,
+    args
+):
     """
     Process a step for the scout agent
 
@@ -146,10 +157,7 @@ def process_scout_step(agent, observation, reward, termination, truncation, agen
 
     assert new_last_scout_step_info
 
-    # Timestep increment
-    timestep_increment = 1
-
-    return new_last_scout_step_info, action, timestep_increment
+    return new_last_scout_step_info, action
 
 def process_guard_step(agent, observation, agents, env, args):
     """
