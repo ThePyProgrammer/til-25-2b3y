@@ -215,6 +215,7 @@ def train(env, model, optimizer, scheduler, buffer, args):
                  f"Total Loss = {update_losses['total_loss']:.4f}")
 
             if episodes_in_buffer >= args.episodes_in_buffer:
+                episodes_in_buffer = 0
                 # Clear buffer after training
                 buffer.clear()
 

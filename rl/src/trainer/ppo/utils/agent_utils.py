@@ -115,6 +115,9 @@ def process_scout_step(agent, observation, reward, termination, truncation, agen
     action = None
     new_last_scout_step_info = {}
 
+    max_retries = 3
+    tries = 0
+
     while action is None or (
         action == previous_action
         and previous_action in [Action.LEFT, Action.RIGHT]
@@ -135,6 +138,11 @@ def process_scout_step(agent, observation, reward, termination, truncation, agen
         }
 
         action = action.item()
+
+        tries += 1
+
+        if tries >= max_retries:
+            break
 
     assert new_last_scout_step_info
 
