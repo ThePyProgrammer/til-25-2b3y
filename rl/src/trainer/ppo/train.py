@@ -11,8 +11,7 @@ from til_environment.types import RewardNames
 
 # Import utility modules
 from trainer.ppo.utils.args import parse_args
-from trainer.ppo.utils.environment import setup_environment, set_seeds, get_scout_initial_observation, extract_observation_shape
-from trainer.ppo.utils.agent_utils import init_agents
+from trainer.ppo.utils.environment import setup_environment, set_seeds
 from trainer.ppo.utils.model_utils import initialize_model, initialize_optimizer, load_checkpoint, apply_model_precision
 from trainer.ppo.utils.training_loop import train
 from trainer.ppo.utils.buffer import ExperienceBuffer
@@ -20,14 +19,14 @@ from trainer.ppo.utils.scheduler import create_scheduler
 
 
 REWARDS_DICT = {
-    RewardNames.GUARD_CAPTURES: 1,
-    RewardNames.SCOUT_CAPTURED: -1,
-    RewardNames.SCOUT_RECON: 0.05,
-    RewardNames.SCOUT_MISSION: 0.1,
-    RewardNames.WALL_COLLISION: -0.1,
-    RewardNames.SCOUT_TRUNCATION: 0.5,
-    RewardNames.STATIONARY_PENALTY: -0.1,
-    RewardNames.SCOUT_STEP: 0.05
+    RewardNames.GUARD_CAPTURES: 10,
+    RewardNames.SCOUT_CAPTURED: -10,
+    RewardNames.SCOUT_RECON: 0.5,
+    RewardNames.SCOUT_MISSION: 1,
+    RewardNames.WALL_COLLISION: -1,
+    RewardNames.SCOUT_TRUNCATION: 5,
+    RewardNames.STATIONARY_PENALTY: -1,
+    RewardNames.SCOUT_STEP: 0.2
 }
 
 def main(args):
@@ -41,18 +40,8 @@ def main(args):
     # Set up environment
     env = setup_environment(args, REWARDS_DICT)
 
-    # Initialize agents
-    agents = init_agents(env, args.num_guards)
-
-    # Get initial observation to determine input shape
-    scout_initial_observation = get_scout_initial_observation(env)
-
-    # Update scout's map with the initial observation to determine tensor shape
-    agents['maps']['scout'](scout_initial_observation)
-    dummy_map_tensor = agents['maps']['scout'].get_tensor()
-
     # Extract observation shape information
-    CHANNELS, MAP_SIZE, ACTION_DIM = extract_observation_shape(dummy_map_tensor)
+    CHANNELS, MAP_SIZE, ACTION_DIM = 12, 31, 4
     print(f"Detected Map size: {MAP_SIZE}, Channels: {CHANNELS}, Action Dim: {ACTION_DIM}")
 
     # Initialize model
@@ -84,7 +73,7 @@ def main(args):
     buffer = ExperienceBuffer()
 
     # Run training loop
-    train(env, agents, model, optimizer, scheduler, buffer, args)
+    train(env, model, optimizer, scheduler, buffer, args)
 
     # Close environment
     env.close()

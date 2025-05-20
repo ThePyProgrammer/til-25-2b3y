@@ -1,7 +1,7 @@
 from typing import Optional
 
 import numpy as np
-import heapq
+from numpy.typing import NDArray
 import torch
 
 from .utils import (
@@ -17,6 +17,21 @@ from .node import NodeRegistry, DirectionalNode
 from .trajectory import TrajectoryTree
 
 
+def get_init_map_array(size):
+    map = np.zeros((size, size), dtype=np.uint8)
+
+    # Add walls along the edges
+    # Left edge: Add left walls to all tiles in leftmost column
+    map[0:size, 0] |= (1 << 6)  # Left wall (bit 6)
+    # Right edge: Add right walls to all tiles in rightmost column
+    map[0:size, size-1] |= (1 << 4)  # Right wall (bit 4)
+    # Top edge: Add top walls to all tiles in top row
+    map[0, 0:size] |= (1 << 7)  # Top wall (bit 7)
+    # Bottom edge: Add bottom walls to all tiles in bottom row
+    map[size-1, 0:size] |= (1 << 5)  # Bottom wall (bit 5)
+
+    return map
+
 class Map:
     EMPTY = TileContent.EMPTY
     RECON = TileContent.RECON
@@ -30,7 +45,7 @@ class Map:
             use_viewcone: Whether to use viewcone for action selection (default: True)
         """
         self.size = 16  # Assume a 16x16 environment
-        self.map = np.zeros((self.size, self.size), dtype=np.uint8)
+        self.map = get_init_map_array(self.size)
         self.viewed = np.zeros((self.size, self.size), dtype=bool)
         self.last_updated = np.zeros((self.size, self.size), dtype=np.int32)  # Timestamp for last update
         self.recently_updated = np.zeros((self.size, self.size), dtype=np.uint8)
@@ -78,7 +93,7 @@ class Map:
         """
         viewcone = observation['viewcone']
         self.direction = observation['direction']
-        self.agent_loc = observation['location']
+        self.agent_loc: NDArray = observation['location']
 
         # Increment step counter
         self.step_counter += 1
@@ -161,6 +176,16 @@ class Map:
                     walls[y, x, 3] = tile.has_top_wall
 
         return walls
+
+
+    def get_tiles(self) -> list[list[Tile]]:
+        """
+        Extract tile type information (empty, recon, mission) from the map.
+
+        Returns:
+            np.ndarray: Array of shape (size, size) containing tile type information.
+        """
+        return [[Tile(self.map[y, x]) for y in range(16)] for x in range(16)]
 
     def get_tile_type(self):
         """
@@ -369,15 +394,16 @@ class Map:
 
     def get_tensor(self) -> torch.Tensor:
         """
-        Returns a tensor representation of the map with multiple channels
+        Returns a tensor representation of the map with multiple channels.
+        The map is rotated so the agent is always facing right (direction 0).
 
         Args:
             observation: Optional dictionary containing agent's current state.
                          Should include 'location' and 'direction' keys.
 
         Returns:
-            torch.Tensor: A tensor of shape (14, 16, 16) containing:
-                - Channel 0: no_vision (0/1)
+            torch.Tensor: A tensor of shape (12, 31, 31) containing:
+                - Channel 0: vision (0/1)
                 - Channel 1: empty tiles (0/1)
                 - Channel 2: recon tiles (0/1)
                 - Channel 3: mission tiles (0/1)
@@ -388,56 +414,89 @@ class Map:
                 - Channel 8: left_wall (0/1)
                 - Channel 9: right_wall (0/1)
                 - Channel 10: time_since_updated (0-1)
-                - Channel 11: is_here (0/1) for directions
-                - Channel 12: step (0-1)
-                - Channel 13: direction (0/1/2/3)
+                - Channel 11: step (0-1) normalised from 0-100 to 0-1
         """
-        # Initialize tensor with zeros
-        tensor = torch.zeros((14, self.size, self.size), dtype=torch.float32)
+        # Output tensor size
+        tensor_size = 16 * 2 - 1
+        center = tensor_size // 2  # Center position is 15 for a 31x31 tensor
 
-        # Channel 0: no_vision (inverse of viewed)
-        tensor[0] = torch.tensor(~self.viewed, dtype=torch.float32)
+        # Initialize tensor with zeros (12 channels)
+        tensor = torch.zeros((12, tensor_size, tensor_size), dtype=torch.float32)
 
-        # Get tile types
-        tile_types = self.get_tile_type()
+        # Get current direction (0:right, 1:down, 2:left, 3:up)
+        direction = self.direction
 
-        # Channels 1-3: empty, recon, mission tiles
+        tiles = self.get_tiles()
+
         for y in range(self.size):
             for x in range(self.size):
-                if self.viewed[y, x]:
-                    tile_content = tile_types[y][x]
-                    if tile_content == TileContent.EMPTY:
-                        tensor[1, y, x] = 1.0
-                    elif tile_content == TileContent.RECON:
-                        tensor[2, y, x] = 1.0
-                    elif tile_content == TileContent.MISSION:
-                        tensor[3, y, x] = 1.0
+                tile = tiles[x][y]
 
-        # Channels 4-5: scout and guard
-        scouts, guards = self.get_agents()
-        tensor[4] = torch.tensor(scouts, dtype=torch.float32)
-        tensor[5] = torch.tensor(guards, dtype=torch.float32)
+                new_x, new_y = to_centered_coords(x, y, self.agent_loc, center)
 
-        # Channels 6-9: walls (top, bottom, left, right)
-        walls = self.get_walls()
-        tensor[6] = torch.tensor(walls[:, :, 3], dtype=torch.float32)  # top walls
-        tensor[7] = torch.tensor(walls[:, :, 1], dtype=torch.float32)  # bottom walls
-        tensor[8] = torch.tensor(walls[:, :, 2], dtype=torch.float32)  # left walls
-        tensor[9] = torch.tensor(walls[:, :, 0], dtype=torch.float32)  # right walls
+                # Channels 0-3: no_vision, empty, recon, mission tiles
+                if tile.is_visible:
+                    tensor[0, new_y, new_x] = 1.0
 
-        # Channel 10: last_updated (recently updated cells)
-        # Consider a cell as "recently updated" if it was updated in the last step
-        tensor[10] = torch.tensor(self.time_since_update / 100.0, dtype=torch.float32)
+                if tile.is_empty:
+                    tensor[1, new_y, new_x] = 1.0
+                elif tile.is_recon:
+                    tensor[2, new_y, new_x] = 1.0
+                elif tile.is_mission:
+                    tensor[3, new_y, new_x] = 1.0
 
-        # Channel 11: is_here (agent location)
-        if 0 <= self.agent_loc[0] < self.size and 0 <= self.agent_loc[1] < self.size:
-            tensor[11, self.agent_loc[1], self.agent_loc[0]] = 1.0
+                # Channels 4-5: scout and guard
+                if tile.has_scout:
+                    tensor[4, new_y, new_x] = 1.0
+                elif tile.has_guard:
+                    tensor[5, new_y, new_x] = 1.0
 
-        # Channel 12: step (normalized to 0-1 by dividing by 100)
+                # Channel 6-9: walls (top, bottom, left, right)
+                top_bit = 1 if tile.has_top_wall else 0
+                right_bit = 1 if tile.has_right_wall else 0
+                bottom_bit = 1 if tile.has_bottom_wall else 0
+                left_bit = 1 if tile.has_left_wall else 0
+
+                for turn in range(direction):
+                    left_bit, bottom_bit, right_bit, top_bit = top_bit, left_bit, bottom_bit, right_bit
+
+                tensor[6, new_y, new_x] = top_bit
+                tensor[7, new_y, new_x] = bottom_bit
+                tensor[8, new_y, new_x] = left_bit
+                tensor[9, new_y, new_x] = right_bit
+
+                # Channel 10: last_updated (recently updated cells)
+                tensor[10, new_y, new_x] = self.time_since_update[y, x] / 100.0
+
+        # Channel 11: step
         normalized_step = self.step_counter / 100.0
-        tensor[12].fill_(normalized_step)
+        tensor[11].fill_(normalized_step)
 
-        # Channel 13: direction
-        tensor[13].fill_(float(self.direction))
+        # Rotate the entire tensor based on the agent's direction
+        if direction == 1:  # down - rotate 90° counter-clockwise
+            tensor = torch.rot90(tensor, k=1, dims=[1, 2])
+        elif direction == 2:  # left - rotate 180°
+            tensor = torch.rot90(tensor, k=2, dims=[1, 2])
+        elif direction == 3:  # up - rotate 90° clockwise
+            tensor = torch.rot90(tensor, k=3, dims=[1, 2])
+        # direction 0 (right) - no rotation needed
+
+        # import matplotlib.pyplot as plt
+
+        # tensor[3][15][15] = 0.5
+
+        # plt.imshow(tensor[3])
+        # plt.show()
 
         return tensor
+
+def to_centered_coords(x: int, y: int, agent_loc, center: int):
+    # Calculate offsets to place agent at center
+    x_offset = center - agent_loc[0]
+    y_offset = center - agent_loc[1]
+
+    # Apply offset to place at center of tensor
+    new_x = x + x_offset
+    new_y = y + y_offset
+
+    return new_x, new_y

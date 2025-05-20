@@ -93,11 +93,12 @@ class MapEncoder(nn.Module):
                     out_channels,
                     kernel_size,
                     stride,
-                    padding=kernel_size//2,  # Same padding
+                    padding=0,  # No padding
                     use_batch_norm=use_batch_norm
                 )
             )
             in_channels = out_channels
+            current_size -= 2
             current_size = current_size // stride if stride > 1 else current_size
 
         # Calculate flattened size after convolutions
@@ -196,9 +197,9 @@ class LargeMapEncoder(MapEncoder):
             map_size=map_size,
             channels=channels,
             embedding_dim=embedding_dim,
-            conv_layers=[32, 64, 128, 256, 256],
-            kernel_sizes=[3, 3, 3, 3, 3],
-            strides=[1, 1, 1, 1, 1],
+            conv_layers=[32, 32, 64, 64, 128, 128, 256, 256],
+            kernel_sizes=[3, 3, 3, 3, 3, 3, 3, 3],
+            strides=[1, 1, 1, 1, 1, 1, 1, 1],
             fc_layers=[1024, 512],
             use_batch_norm=True,
             dropout_rate=0.2,

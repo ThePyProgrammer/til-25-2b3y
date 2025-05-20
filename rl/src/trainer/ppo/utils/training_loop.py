@@ -7,7 +7,6 @@ from .ppo_update import ppo_update
 
 def train_episode(
     env,
-    agents,
     model,
     optimizer,
     scheduler,
@@ -152,7 +151,7 @@ def update_model(buffer, model, optimizer, scheduler, args, device):
 
     return update_losses
 
-def train(env, agents, model, optimizer, scheduler, buffer, args):
+def train(env, model, optimizer, scheduler, buffer, args):
     """
     Main training loop
 
@@ -190,7 +189,6 @@ def train(env, agents, model, optimizer, scheduler, buffer, args):
             should_continue
         ) = train_episode(
             env,
-            agents,
             model,
             optimizer,
             scheduler,
