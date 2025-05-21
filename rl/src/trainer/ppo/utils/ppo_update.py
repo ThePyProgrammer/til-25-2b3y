@@ -6,67 +6,100 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 
-class ReturnNormalizer(nn.Module):
+class RunningStatistics:
     """
-    A PyTorch module for normalizing returns using running statistics.
+    Running statistics class that tracks mean and standard deviation
+    as described in Algorithm 1.
+    """
+    def __init__(self):
+        # Initialize statistics trackers
+        self.count = 0
+        self.mean = 0.0
+        self.var_sum = 0.0
+    
+    def add(self, value):
+        """Add a new value to the running statistics"""
+        self.count += 1
+        delta = value - self.mean
+        self.mean += delta / self.count
+        self.var_sum += delta * (value - self.mean)
+    
+    def standard_deviation(self):
+        """Calculate the standard deviation of recorded values"""
+        if self.count < 2:
+            return torch.tensor(1.0)  # Default value when insufficient data
+        return torch.sqrt(self.var_sum / self.count)
 
-    This normalizer maintains running mean and variance to normalize returns,
-    which helps stabilize training by reducing the effect of varying reward scales.
+class RewardScaling(nn.Module):
     """
-    def __init__(self, epsilon=1e-8):
-        super(ReturnNormalizer, self).__init__()
-        self.register_buffer("running_mean", torch.zeros(1))
-        self.register_buffer("running_var", torch.ones(1))
-        self.register_buffer("count", torch.zeros(1))
+    Implementation of PPO reward scaling as described in Algorithm 1.
+    
+    This module tracks a running sum of discounted rewards R_t = γR_{t-1} + r_t
+    and scales rewards by dividing by the standard deviation of this sum.
+    """
+    
+    def __init__(self, gamma=0.99, epsilon=1e-8):
+        """
+        Initialize the reward scaling module.
+        
+        Args:
+            gamma (float): Discount factor γ for calculating the running sum R_t
+            epsilon (float): Small constant to avoid division by zero
+        """
+        super(RewardScaling, self).__init__()
+        
+        # Initialize as per Algorithm 1
+        self.R_t = torch.tensor(0.0)  # R_0 ← 0
+        self.RS = RunningStatistics()  # RS ← RunningStatistics()
+        self.gamma = gamma  # γ is the reward discount
         self.epsilon = epsilon
-
-    def forward(self, returns):
+        
+    def forward(self, rewards):
         """
-        Normalize returns using running statistics.
-
+        Scale observation (rewards) as per Algorithm 1.
+        Handles both single rewards and batched rewards of shape [batch_size].
+        
         Args:
-            returns: Tensor of returns to normalize
-
+            rewards (torch.Tensor): Rewards r_t to be scaled, can be shape [] or [batch_size]
+            
         Returns:
-            Normalized returns
+            torch.Tensor: Scaled rewards with same shape as input
         """
-        # Use running stats to normalize
-        return (returns - self.running_mean) / (torch.sqrt(self.running_var) + self.epsilon)
-
-    def update(self, returns):
-        """
-        Update running statistics with new returns.
-
-        Args:
-            returns: Tensor of new returns
-
-        Returns:
-            Normalized returns (after updating statistics)
-        """
-        batch_mean = returns.mean()
-        batch_var = returns.var(unbiased=False)
-        batch_size = returns.size(0)
-
-        # Update running stats using Welford's online algorithm
-        new_count = self.count + batch_size
-        delta = batch_mean - self.running_mean
-        new_mean = self.running_mean + delta * batch_size / new_count
-
-        # Update variance
-        m_a = self.running_var * self.count
-        m_b = batch_var * batch_size
-        M2 = m_a + m_b + delta**2 * self.count * batch_size / new_count
-        new_var = M2 / new_count
-
-        # Update buffers
-        self.running_mean = new_mean
-        self.running_var = new_var
-        self.count = new_count
-
-        # Return normalized returns
-        return self(returns)
-
-
+        # Convert input to tensor if needed
+        if not isinstance(rewards, torch.Tensor):
+            rewards = torch.tensor(rewards, dtype=torch.float32)
+        
+        # Store original shape for return value
+        original_shape = rewards.shape
+        
+        # Process each reward in the batch
+        scaled_rewards = torch.zeros_like(rewards)
+        
+        # Flatten rewards to iterate through them
+        flat_rewards = rewards.flatten()
+        
+        for i, r in enumerate(flat_rewards):
+            # R_t ← γR_{t-1} + r_t
+            self.R_t = self.gamma * self.R_t + r
+            
+            # Add(RS, R_t)
+            self.RS.add(self.R_t)
+            
+            # r_t / StandardDeviation(RS)
+            std = self.RS.standard_deviation()
+            std = torch.max(std, torch.tensor(self.epsilon))  # Prevent division by zero
+            
+            # Store the scaled reward
+            scaled_rewards.flatten()[i] = r / std
+        
+        # Return with original shape
+        return scaled_rewards
+    
+    def reset(self):
+        """Reset the internal statistics"""
+        self.R_t = torch.tensor(0.0)
+        self.RS = RunningStatistics()
+        
 def calculate_gae_returns(
     rewards: torch.Tensor,
     values: torch.Tensor,
@@ -137,7 +170,7 @@ def ppo_update(
     model: nn.Module,
     optimizer: optim.Optimizer,
     data: Dict[str, torch.Tensor],
-    returns_norm: nn.Module,
+    reward_scaler: nn.Module,
     args: Any
 ):
     """
@@ -147,7 +180,7 @@ def ppo_update(
         model: The PPOActorCritic model.
         optimizer: The optimizer for the model.
         data: A dictionary containing batched tensors for the update:
-              'map_inputs': (T, C, H, W)
+              'b_critic_inputs': (T, C, H, W)
               'actions': (T,)
               'log_probs': (T,) (old log probabilities)
               'values': (T,) (old value estimates)
@@ -162,7 +195,7 @@ def ppo_update(
         - entropy_bonus
         - total_loss
     """
-    b_map_inputs = data['map_inputs']
+    b_critic_inputs = data['critic_inputs']
     b_actions = data['actions']
     b_log_probs_old = data['log_probs']
     b_values_old = data['values']
@@ -185,7 +218,7 @@ def ppo_update(
 
     # Normalize returns using running statistics if enabled
     if args.normalize_returns:
-        returns = returns_norm.update(returns)
+        returns = reward_scaler(returns)
 
     # --- PPO Epochs ---
     # Create indices for mini-batching
@@ -208,7 +241,7 @@ def ppo_update(
             end_idx = start_idx + mini_batch_size
             mini_batch_indices = shuffled_indices[start_idx:end_idx]
 
-            mb_map_inputs = b_map_inputs[mini_batch_indices]
+            mb_critic_inputs = b_critic_inputs[mini_batch_indices]
             mb_actions = b_actions[mini_batch_indices]
             mb_log_probs_old = b_log_probs_old[mini_batch_indices]
             mb_values_old = b_values_old[mini_batch_indices]
@@ -218,8 +251,8 @@ def ppo_update(
             # 4. Compute Loss
             # Get new log probs and values from the current model
             # Ensure inputs match model dtype (already handled during collection if bfloat16)
-            log_probs_new, entropy, values_new = model.evaluate_actions(mb_map_inputs, mb_actions)
-
+            log_probs_new, entropy, values_new = model.evaluate_actions(mb_critic_inputs, mb_actions)
+            
             # Policy Loss (Clipped Surrogate Objective)
             # Ensure ratio calculation is done in floating point (bfloat16 or float32)
             ratio = torch.exp(log_probs_new.float() - mb_log_probs_old.float().detach()) # detach old log_probs, cast to float for ratio stability
@@ -260,7 +293,7 @@ def ppo_update(
 
 
             # Optional: Gradient clipping
-            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
 
             optimizer.step()
 

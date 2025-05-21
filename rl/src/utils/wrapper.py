@@ -56,7 +56,7 @@ class CustomDictWrapper(BaseWrapper[AgentID, ObsType, ActionType]):
         super().step(action)
 
     def state(self):
-        _state = super().state()
+        _state = np.copy(super().state())
 
         # add players
         for _agent, loc in self.agent_locations.items():

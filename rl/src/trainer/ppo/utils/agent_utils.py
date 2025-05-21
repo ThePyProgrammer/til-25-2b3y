@@ -98,7 +98,7 @@ def process_scout_step(
         # S_{t-1}, A_{t-1}, log_prob_{t-1}, V_{t-1} are in last_scout_step_info
         # R_{t-1}, done_{t-1} are available now from env.last()
         buffer.add(
-            map_input=last_scout_step_info['map_input'],
+            critic_input=last_scout_step_info['critic_input'],
             action=last_scout_step_info['action'],
             log_prob=last_scout_step_info['log_prob'],
             value=last_scout_step_info['value'],
@@ -111,28 +111,26 @@ def process_scout_step(
     # The current 'observation' is S_t
     # Use scout's map to get tensor representation
     agents['maps']['scout'](observation)  # Update map with observation
-    map_input = agents['maps']['scout'].get_tensor().unsqueeze(0)  # Get tensor and add batch dim
 
     location = observation["location"]
     position = Point(int(location[0]), int(location[1]))
     direction = Direction(observation["direction"])
+    
+    map_input = agents['maps']['scout'].get_tensor().unsqueeze(0)  # Get tensor and add batch dim
+    global_input = tiles_to_tensor(
+        map_to_tiles(env.state().transpose()),
+        location,
+        direction,
+        16,
+        np.zeros((16, 16)),
+        agents['maps']['scout'].step_counter
+    ).unsqueeze(0)
+
     node: DirectionalNode = agents['maps']['scout'].get_node(position, direction)
     valid_actions = set(node.children.keys())
 
     if args.global_critic:
-        critic_input = tiles_to_tensor(
-            map_to_tiles(env.state().transpose()),
-            location,
-            direction,
-            16,
-            np.zeros((16, 16)),
-            agents['maps']['scout'].step_counter
-        ).unsqueeze(0)
-
-        import matplotlib.pyplot as plt
-
-        plt.imshow(critic_input[0][1])
-        plt.show()
+        critic_input = global_input
     else:
         critic_input = map_input
 
@@ -165,7 +163,7 @@ def process_scout_step(
 
         # Store info for this step to be finalized in the next scout turn
         new_last_scout_step_info = {
-            'map_input': map_input,  # Store the tensor directly
+            'critic_input': critic_input,
             'action': action.item(),
             'log_prob': log_prob.item(),
             'value': value.item(),

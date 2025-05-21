@@ -4,7 +4,7 @@ import torch
 
 from .agent_utils import process_scout_step, process_guard_step, process_other_agents, init_agents
 from .model_utils import save_checkpoint
-from .ppo_update import ppo_update, ReturnNormalizer
+from .ppo_update import ppo_update, RewardScaling
 
 
 class TimeoutError(Exception):
@@ -44,7 +44,7 @@ def timeout(timeout_seconds):
         return wrapper
     return decorator
 
-@timeout(10)  # Set timeout to 10 seconds
+@timeout(20)
 def reset_environment(env, seed):
     return env.reset(seed=seed)
 
@@ -115,7 +115,7 @@ def train_episode(
             # finalize it with the final reward/done
             if last_scout_step_info is not None:
                 buffer.add(
-                    map_input=last_scout_step_info['map_input'],
+                    critic_input=last_scout_step_info['critic_input'],
                     action=last_scout_step_info['action'],
                     log_prob=last_scout_step_info['log_prob'],
                     value=last_scout_step_info['value'],
@@ -173,7 +173,7 @@ def train_episode(
         steps
     )
 
-def update_model(buffer, model, optimizer, scheduler, norm, args, device):
+def update_model(buffer, model, optimizer, scheduler, reward_scaler, args, device):
     """
     Update the model using PPO
 
@@ -201,7 +201,7 @@ def update_model(buffer, model, optimizer, scheduler, norm, args, device):
             training_data[k] = v.to(device)
 
     # Perform PPO update
-    update_losses = ppo_update(model, optimizer, training_data, norm, args)
+    update_losses = ppo_update(model, optimizer, training_data, reward_scaler, args)
 
     # Step the learning rate scheduler if it exists
     if scheduler:
@@ -330,8 +330,8 @@ def train(env, model, optimizer, scheduler, buffer, args):
     episodes_in_buffer = 0
     timesteps_elapsed = 0  # Will be overridden if resuming
 
-    norm = ReturnNormalizer()
-    norm.to(device)
+    reward_scaler = RewardScaling()
+    reward_scaler.to(device)
 
     # Main training loop
     while timesteps_elapsed < args.timesteps:
@@ -372,7 +372,7 @@ def train(env, model, optimizer, scheduler, buffer, args):
             episodes_since_update = 0
 
             print("Performing PPO update.")
-            update_losses = update_model(buffer, model, optimizer, scheduler, norm, args, device)
+            update_losses = update_model(buffer, model, optimizer, scheduler, reward_scaler, args, device)
 
             # Log losses
             print(f"Timestep {timesteps_elapsed}: "

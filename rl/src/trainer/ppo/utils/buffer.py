@@ -9,7 +9,7 @@ class ExperienceBuffer:
     for Proximal Policy Optimization (PPO).
     """
     def __init__(self):
-        self.map_inputs = []
+        self.critic_inputs = []
         self.actions = []
         self.log_probs = []
         self.values = []
@@ -18,7 +18,7 @@ class ExperienceBuffer:
 
     def add(
         self,
-        map_input: torch.Tensor,
+        critic_input: torch.Tensor,
         action: int,
         log_prob: float,
         value: float,
@@ -38,7 +38,7 @@ class ExperienceBuffer:
             done: The done signal *after* taking the action (True if episode terminated or truncated).
         """
         # Store unbatched tensors/values
-        self.map_inputs.append(map_input.squeeze(0) if map_input.ndim == 4 else map_input) # Ensure (C, H, W)
+        self.critic_inputs.append(critic_input.squeeze(0) if critic_input.ndim == 4 else critic_input) # Ensure (C, H, W)
         self.actions.append(action)
         self.log_probs.append(log_prob)
         self.values.append(value)
@@ -54,12 +54,12 @@ class ExperienceBuffer:
             actions, log_probs, values, rewards, and dones.
             Returns None if the buffer is empty.
         """
-        if not self.map_inputs:
+        if not self.critic_inputs:
             return None # Buffer is empty
 
         # Stack collected tensors/values into batch tensors
         # Add batch dimension at dim 0
-        b_map_inputs = torch.stack(self.map_inputs, dim=0)
+        b_critic_inputs = torch.stack(self.critic_inputs, dim=0)
         b_actions = torch.tensor(self.actions, dtype=torch.long)
         b_log_probs = torch.tensor(self.log_probs, dtype=torch.float32)
         b_values = torch.tensor(self.values, dtype=torch.float32)
@@ -67,7 +67,7 @@ class ExperienceBuffer:
         b_dones = torch.tensor(self.dones, dtype=torch.float32) # Still float (T,)
 
         return {
-            'map_inputs': b_map_inputs, # Shape (T, C, H, W)
+            'critic_inputs': b_critic_inputs, # Shape (T, C, H, W)
             'actions': b_actions, # Shape (T,)
             'log_probs': b_log_probs, # Shape (T,)
             'values': b_values, # Shape (T,)
@@ -79,7 +79,7 @@ class ExperienceBuffer:
         """
         Clears all stored experiences from the buffer.
         """
-        self.map_inputs = []
+        self.critic_inputs = []
         self.actions = []
         self.log_probs = []
         self.values = []
@@ -90,7 +90,7 @@ class ExperienceBuffer:
         """
         Returns the number of steps currently stored in the buffer.
         """
-        return len(self.map_inputs)
+        return len(self.critic_inputs)
 
     def is_empty(self):
         """
