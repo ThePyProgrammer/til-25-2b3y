@@ -98,6 +98,7 @@ def process_scout_step(
         # S_{t-1}, A_{t-1}, log_prob_{t-1}, V_{t-1} are in last_scout_step_info
         # R_{t-1}, done_{t-1} are available now from env.last()
         buffer.add(
+            actor_input=last_scout_step_info['actor_input'],
             critic_input=last_scout_step_info['critic_input'],
             action=last_scout_step_info['action'],
             log_prob=last_scout_step_info['log_prob'],
@@ -163,6 +164,7 @@ def process_scout_step(
 
         # Store info for this step to be finalized in the next scout turn
         new_last_scout_step_info = {
+            'actor_input': map_input,
             'critic_input': critic_input,
             'action': action.item(),
             'log_prob': log_prob.item(),

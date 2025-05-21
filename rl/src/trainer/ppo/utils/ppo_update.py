@@ -195,6 +195,7 @@ def ppo_update(
         - entropy_bonus
         - total_loss
     """
+    b_actor_inputs = data['actor_inputs']
     b_critic_inputs = data['critic_inputs']
     b_actions = data['actions']
     b_log_probs_old = data['log_probs']
@@ -241,6 +242,7 @@ def ppo_update(
             end_idx = start_idx + mini_batch_size
             mini_batch_indices = shuffled_indices[start_idx:end_idx]
 
+            mb_actor_inputs = b_actor_inputs[mini_batch_indices]
             mb_critic_inputs = b_critic_inputs[mini_batch_indices]
             mb_actions = b_actions[mini_batch_indices]
             mb_log_probs_old = b_log_probs_old[mini_batch_indices]
@@ -251,7 +253,7 @@ def ppo_update(
             # 4. Compute Loss
             # Get new log probs and values from the current model
             # Ensure inputs match model dtype (already handled during collection if bfloat16)
-            log_probs_new, entropy, values_new = model.evaluate_actions(mb_critic_inputs, mb_actions)
+            log_probs_new, entropy, values_new = model.evaluate_actions(mb_actor_inputs, mb_critic_inputs, mb_actions)
             
             # Policy Loss (Clipped Surrogate Objective)
             # Ensure ratio calculation is done in floating point (bfloat16 or float32)

@@ -237,12 +237,13 @@ class PPOActorCritic(nn.Module):
 
         return action, log_prob, entropy, value
 
-    def evaluate_actions(self, map_input, actions):
+    def evaluate_actions(self, actor_input, critic_input, actions):
         """
         Evaluate actions for PPO update.
 
         Args:
-            map_input: Map observation tensor
+            actor_input: Actor's observation tensor:
+            critic_input: Critic's observation tensor
             actions: Actions to evaluate
 
         Returns:
@@ -251,13 +252,13 @@ class PPOActorCritic(nn.Module):
             values: State value estimates
         """
         # Get actor embedding
-        actor_embedding = self.actor_encoder(map_input)
+        actor_embedding = self.actor_encoder(actor_input)
 
         # Get critic embedding (same as actor if shared)
         if self.shared_encoder:
             critic_embedding = actor_embedding
         else:
-            critic_embedding = self.critic_encoder(map_input)
+            critic_embedding = self.critic_encoder(critic_input)
 
         # Get action log probs and entropy
         log_probs, entropy = self.actor.evaluate_actions(actor_embedding, actions)

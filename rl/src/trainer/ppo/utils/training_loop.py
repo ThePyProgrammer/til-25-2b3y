@@ -115,6 +115,7 @@ def train_episode(
             # finalize it with the final reward/done
             if last_scout_step_info is not None:
                 buffer.add(
+                    actor_input=last_scout_step_info['actor_input'],
                     critic_input=last_scout_step_info['critic_input'],
                     action=last_scout_step_info['action'],
                     log_prob=last_scout_step_info['log_prob'],
