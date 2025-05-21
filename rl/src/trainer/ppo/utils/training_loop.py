@@ -1,9 +1,52 @@
+import threading
+
 import torch
 
 from .agent_utils import process_scout_step, process_guard_step, process_other_agents, init_agents
 from .model_utils import save_checkpoint
 from .ppo_update import ppo_update
 
+
+class TimeoutError(Exception):
+    pass
+
+def timeout(timeout_seconds):
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            # Store the result
+            result = None
+            exception = None
+
+            # Define the thread function
+            def worker():
+                nonlocal result, exception
+                try:
+                    result = func(*args, **kwargs)
+                except Exception as e:
+                    exception = e
+
+            # Create and start the thread
+            thread = threading.Thread(target=worker)
+            thread.daemon = True
+            thread.start()
+
+            # Wait for completion or timeout
+            thread.join(timeout_seconds)
+            if thread.is_alive():
+                # Thread is still running after timeout
+                raise TimeoutError(f"Function timed out after {timeout_seconds} seconds")
+
+            # If there was an exception in the thread, raise it
+            if exception:
+                raise exception
+
+            return result
+        return wrapper
+    return decorator
+
+@timeout(10)  # Set timeout to 10 seconds
+def reset_environment(env, seed):
+    return env.reset(seed=seed)
 
 def train_episode(
     env,
@@ -38,8 +81,16 @@ def train_episode(
                 updated steps_since_save, updated episodes_since_update,
                 scout_reward, whether training should continue)
     """
+    seed = args.seed + timesteps_elapsed
+
     # Reset environment with a varying seed
-    env.reset(seed=args.seed + timesteps_elapsed)
+    while True:
+        try:
+            reset_environment(env, seed)
+            break
+        except TimeoutError as _:
+            seed += 1
+
     last_scout_step_info = None  # Clear previous step
     agents = init_agents(env, args.num_guards)
     model.to(device)
