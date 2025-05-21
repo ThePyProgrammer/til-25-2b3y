@@ -321,6 +321,7 @@ def train(env, model, optimizer, scheduler, buffer, args):
     timesteps_elapsed = 0  # Will be overridden if resuming
 
     norm = ReturnNormalizer()
+    norm.to(device)
 
     # Main training loop
     while timesteps_elapsed < args.timesteps:
