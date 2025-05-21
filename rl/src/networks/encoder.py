@@ -188,6 +188,25 @@ class MapEncoder(nn.Module):
         return x
 
 
+class TinyMapEncoder(MapEncoder):
+    """Smaller variant optimized for CPU inference."""
+
+    def __init__(self, map_size=16, channels=14, embedding_dim=256, use_center_only=False):
+        super().__init__(
+            map_size=map_size,
+            channels=channels,
+            embedding_dim=embedding_dim,
+            conv_layers=[8, 16, 16, 32],
+            kernel_sizes=[7, 3, 3, 3],  # Larger initial kernel to capture more context
+            strides=[1, 1, 2, 2],       # More aggressive downsampling
+            fc_layers=[],          # Smaller FC layer
+            use_batch_norm=True,     # Skip batch norm for CPU efficiency
+            dropout_rate=0.1,        # Skip dropout for inference speed
+            use_layer_norm=False,     # Keep layer norm for stability
+            use_center_only=use_center_only
+        )
+
+
 class SmallMapEncoder(MapEncoder):
     """Smaller variant optimized for CPU inference."""
 
@@ -229,6 +248,8 @@ class LargeMapEncoder(MapEncoder):
 def create_encoder(encoder_type="standard", **kwargs):
     """Factory function to create different encoder variants."""
     if encoder_type == "small":
+        return TinyMapEncoder(**kwargs)
+    elif encoder_type == "small":
         return SmallMapEncoder(**kwargs)
     elif encoder_type == "large":
         return LargeMapEncoder(**kwargs)

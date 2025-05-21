@@ -4,7 +4,7 @@ import torch
 
 from .agent_utils import process_scout_step, process_guard_step, process_other_agents, init_agents
 from .model_utils import save_checkpoint
-from .ppo_update import ppo_update
+from .ppo_update import ppo_update, ReturnNormalizer
 
 
 class TimeoutError(Exception):
@@ -163,7 +163,7 @@ def train_episode(
         steps
     )
 
-def update_model(buffer, model, optimizer, scheduler, args, device):
+def update_model(buffer, model, optimizer, scheduler, norm, args, device):
     """
     Update the model using PPO
 
@@ -191,7 +191,7 @@ def update_model(buffer, model, optimizer, scheduler, args, device):
             training_data[k] = v.to(device)
 
     # Perform PPO update
-    update_losses = ppo_update(model, optimizer, training_data, args)
+    update_losses = ppo_update(model, optimizer, training_data, norm, args)
 
     # Step the learning rate scheduler if it exists
     if scheduler:
@@ -320,6 +320,8 @@ def train(env, model, optimizer, scheduler, buffer, args):
     episodes_in_buffer = 0
     timesteps_elapsed = 0  # Will be overridden if resuming
 
+    norm = ReturnNormalizer()
+
     # Main training loop
     while timesteps_elapsed < args.timesteps:
         # Run one episode
@@ -359,7 +361,7 @@ def train(env, model, optimizer, scheduler, buffer, args):
             episodes_since_update = 0
 
             print("Performing PPO update.")
-            update_losses = update_model(buffer, model, optimizer, scheduler, args, device)
+            update_losses = update_model(buffer, model, optimizer, scheduler, norm, args, device)
 
             # Log losses
             print(f"Timestep {timesteps_elapsed}: "

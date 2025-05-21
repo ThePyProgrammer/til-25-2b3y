@@ -11,6 +11,9 @@ def parse_args():
     parser.add_argument('--entropy_coef', type=float, default=0.01, help='PPO entropy coefficient')
     parser.add_argument('--value_loss_coef', type=float, default=0.5, help='PPO value loss coefficient')
 
+    parser.add_argument('--normalize_returns', action='store_true', help='normalize returns')
+    parser.add_argument('--orthogonal_init', action='store_true', help='initialize FC layers with orthogonal')
+
     parser.add_argument('--epochs', type=int, default=10, help='number of PPO epochs per update')
     parser.add_argument('--timesteps', type=int, default=1_000_000, help='total timesteps to train')
     parser.add_argument('--batch_size', type=int, default=64, help='mini-batch size for PPO update')

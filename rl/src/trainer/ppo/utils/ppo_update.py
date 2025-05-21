@@ -1,11 +1,79 @@
 from typing import Dict, Any
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
 
-def calculate_gae_returns(rewards: torch.Tensor, values: torch.Tensor, dones: torch.Tensor, gamma: float, gae_lambda: float) -> tuple[torch.Tensor, torch.Tensor]:
+class ReturnNormalizer(nn.Module):
+    """
+    A PyTorch module for normalizing returns using running statistics.
+
+    This normalizer maintains running mean and variance to normalize returns,
+    which helps stabilize training by reducing the effect of varying reward scales.
+    """
+    def __init__(self, epsilon=1e-8):
+        super(ReturnNormalizer, self).__init__()
+        self.register_buffer("running_mean", torch.zeros(1))
+        self.register_buffer("running_var", torch.ones(1))
+        self.register_buffer("count", torch.zeros(1))
+        self.epsilon = epsilon
+
+    def forward(self, returns):
+        """
+        Normalize returns using running statistics.
+
+        Args:
+            returns: Tensor of returns to normalize
+
+        Returns:
+            Normalized returns
+        """
+        # Use running stats to normalize
+        return (returns - self.running_mean) / (torch.sqrt(self.running_var) + self.epsilon)
+
+    def update(self, returns):
+        """
+        Update running statistics with new returns.
+
+        Args:
+            returns: Tensor of new returns
+
+        Returns:
+            Normalized returns (after updating statistics)
+        """
+        batch_mean = returns.mean()
+        batch_var = returns.var(unbiased=False)
+        batch_size = returns.size(0)
+
+        # Update running stats using Welford's online algorithm
+        new_count = self.count + batch_size
+        delta = batch_mean - self.running_mean
+        new_mean = self.running_mean + delta * batch_size / new_count
+
+        # Update variance
+        m_a = self.running_var * self.count
+        m_b = batch_var * batch_size
+        M2 = m_a + m_b + delta**2 * self.count * batch_size / new_count
+        new_var = M2 / new_count
+
+        # Update buffers
+        self.running_mean = new_mean
+        self.running_var = new_var
+        self.count = new_count
+
+        # Return normalized returns
+        return self(returns)
+
+
+def calculate_gae_returns(
+    rewards: torch.Tensor,
+    values: torch.Tensor,
+    dones: torch.Tensor,
+    gamma: float,
+    gae_lambda: float
+) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Calculates Generalized Advantage Estimation (GAE) and returns (value targets).
 
@@ -65,7 +133,13 @@ def calculate_gae_returns(rewards: torch.Tensor, values: torch.Tensor, dones: to
 
     return advantages, returns
 
-def ppo_update(model: torch.nn.Module, optimizer: optim.Optimizer, data: Dict[str, torch.Tensor], args: Any):
+def ppo_update(
+    model: nn.Module,
+    optimizer: optim.Optimizer,
+    data: Dict[str, torch.Tensor],
+    returns_norm: nn.Module,
+    args: Any
+):
     """
     Performs one PPO training update on a batch of experience data.
 
@@ -108,6 +182,10 @@ def ppo_update(model: torch.nn.Module, optimizer: optim.Optimizer, data: Dict[st
     advantages, returns = calculate_gae_returns(
         b_rewards, b_values_old, b_dones, args.gamma, args.gae
     )
+
+    # Normalize returns using running statistics if enabled
+    if args.normalize_returns:
+        returns = returns_norm.update(returns)
 
     # --- PPO Epochs ---
     # Create indices for mini-batching
@@ -205,57 +283,3 @@ def ppo_update(model: torch.nn.Module, optimizer: optim.Optimizer, data: Dict[st
         'entropy_bonus': mean_entropy_bonus,
         'total_loss': mean_total_loss
     }
-
-# Example usage (for testing purposes)
-if __name__ == '__main__':
-    # This part is just for demonstrating the function
-    # In the actual training script, this would be called from the main loop
-    print("Testing ppo_update function (dummy data)...")
-
-    # Dummy data
-    batch_size = 128
-    map_size = 16
-    channels = 14
-    action_dim = 4
-
-    dummy_map_inputs = torch.randn(batch_size, channels, map_size, map_size, dtype=torch.float32)
-    dummy_actions = torch.randint(0, action_dim, (batch_size,), dtype=torch.long)
-    dummy_log_probs_old = torch.randn(batch_size, dtype=torch.float32) # Log probs from a distribution
-    dummy_values_old = torch.randn(batch_size, dtype=torch.float32)
-    dummy_rewards = torch.randn(batch_size, dtype=torch.float32)
-    dummy_dones = torch.randint(0, 2, (batch_size,), dtype=torch.float32) # 0.0 or 1.0
-
-    dummy_data = {
-        'map_inputs': dummy_map_inputs,
-        'actions': dummy_actions,
-        'log_probs': dummy_log_probs_old,
-        'values': dummy_values_old,
-        'rewards': dummy_rewards,
-        'dones': dummy_dones
-    }
-
-    # Dummy model and optimizer (requires importing PPOActorCritic)
-    # from networks.ppo import PPOActorCritic
-    # dummy_model = PPOActorCritic(action_dim=action_dim, map_size=map_size, channels=channels, encoder_type="small")
-    # dummy_optimizer = optim.Adam(dummy_model.parameters(), lr=3e-4)
-    #
-    # # Dummy args
-    # class DummyArgs:
-    #     def __init__(self):
-    #         self.gamma = 0.99
-    #         self.gae = 0.95
-    #         self.epochs = 3
-    #         self.batch_size = 32
-    #         self.clip_eps = 0.2
-    #         self.bfloat16 = False # Set to True to test bfloat16 path
-    #
-    # dummy_args = DummyArgs()
-    #
-    # # Perform update
-    # # losses = ppo_update(dummy_model, dummy_optimizer, dummy_data, dummy_args)
-    # # print("Losses:", losses)
-
-    print("Calculate GAE and Returns (dummy data)...")
-    advantages, returns = calculate_gae_returns(dummy_rewards, dummy_values_old, dummy_dones, 0.99, 0.95)
-    print(f"Advantages shape: {advantages.shape}")
-    print(f"Returns shape: {returns.shape}")

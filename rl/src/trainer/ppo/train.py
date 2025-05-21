@@ -17,6 +17,8 @@ from trainer.ppo.utils.training_loop import train
 from trainer.ppo.utils.buffer import ExperienceBuffer
 from trainer.ppo.utils.scheduler import create_scheduler
 
+from networks.ppo import orthogonal_init
+
 from utils import count_parameters
 
 
@@ -51,12 +53,15 @@ def main(args):
         action_dim=ACTION_DIM,
         map_size=MAP_SIZE,
         channels=CHANNELS,
-        hidden_dims=[32, 32, 32],
-        encoder_type="small",
+        hidden_dims=[32, 32],
+        encoder_type="tiny",
         shared_encoder=False,
         device=device,
-        use_center_only=True,
+        use_center_only=False,
     )
+
+    if args.orthogonal_init:
+        model.apply(orthogonal_init)
 
     print(f"Model has {count_parameters(model):,} parameters")
 
