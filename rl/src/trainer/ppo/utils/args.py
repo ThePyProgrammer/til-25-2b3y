@@ -11,6 +11,8 @@ def parse_args():
     parser.add_argument('--entropy_coef', type=float, default=0.01, help='PPO entropy coefficient')
     parser.add_argument('--value_loss_coef', type=float, default=0.5, help='PPO value loss coefficient')
 
+    parser.add_argument('--global_critic', action='store_true', help='give the critic access to the global state')
+
     parser.add_argument('--normalize_returns', action='store_true', help='normalize returns')
     parser.add_argument('--orthogonal_init', action='store_true', help='initialize FC layers with orthogonal')
 

@@ -131,8 +131,18 @@ def train_episode(
 
             # Process scout step
             last_scout_step_info, action = process_scout_step(
-                agent, observation, reward, termination, truncation,
-                agents, model, device, buffer, last_scout_step_info, args
+                agent,
+                observation,
+                reward,
+                termination,
+                truncation,
+                agents,
+                model,
+                device,
+                buffer,
+                last_scout_step_info,
+                env,
+                args
             )
 
             # Perform the action

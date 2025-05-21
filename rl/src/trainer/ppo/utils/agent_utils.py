@@ -1,8 +1,9 @@
 import random
 
 import torch
+import numpy as np
 
-from grid.map import Map
+from grid.map import Map, map_to_tiles, tiles_to_tensor
 from grid.node import DirectionalNode
 from grid.utils import Point, Action, Direction
 from grid.pathfinder import Pathfinder, PathfinderConfig
@@ -65,7 +66,8 @@ def process_scout_step(
     device,
     buffer,
     last_scout_step_info,
-    args
+    env,
+    args,
 ):
     """
     Process a step for the scout agent
@@ -81,6 +83,7 @@ def process_scout_step(
         device: Compute device (CPU/CUDA)
         buffer: Experience buffer
         last_scout_step_info: Info about the last scout step
+        env: train env
         args: Command line arguments
 
     Returns:
@@ -116,11 +119,30 @@ def process_scout_step(
     node: DirectionalNode = agents['maps']['scout'].get_node(position, direction)
     valid_actions = set(node.children.keys())
 
+    if args.global_critic:
+        critic_input = tiles_to_tensor(
+            map_to_tiles(env.state().transpose()),
+            location,
+            direction,
+            16,
+            np.zeros((16, 16)),
+            agents['maps']['scout'].step_counter
+        ).unsqueeze(0)
+
+        import matplotlib.pyplot as plt
+
+        plt.imshow(critic_input[0][1])
+        plt.show()
+    else:
+        critic_input = map_input
+
     # Ensure tensor dtype matches model dtype (bfloat16 if enabled)
     if args.bfloat16:
         map_input = map_input.to(torch.bfloat16)
+        critic_input = critic_input.to(torch.bfloat16)
 
     map_input = map_input.to(device)
+    critic_input = critic_input.to(device)
 
     # Get action (A_t), log_prob, value (V(S_t)) from the model
     action = None
@@ -138,7 +160,8 @@ def process_scout_step(
         and args.prevent_invalid_actions
     ):
         with torch.no_grad():
-            action, log_prob, entropy, value = model.get_action_and_value(map_input, deterministic=False)
+
+            action, log_prob, entropy, value = model.get_action_and_value(map_input, critic_input, deterministic=False)
 
         # Store info for this step to be finalized in the next scout turn
         new_last_scout_step_info = {

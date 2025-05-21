@@ -1,7 +1,9 @@
+import numpy as np
+
 from pettingzoo.utils.env import ActionType, AECEnv, AgentID, ObsType
 from pettingzoo.utils.wrappers.base import BaseWrapper
 
-from til_environment.types import RewardNames
+from til_environment.types import RewardNames, Player
 from til_environment.gridworld import NUM_ITERS
 
 
@@ -52,3 +54,16 @@ class CustomDictWrapper(BaseWrapper[AgentID, ObsType, ActionType]):
                         )
 
         super().step(action)
+
+    def state(self):
+        _state = super().state()
+
+        # add players
+        for _agent, loc in self.agent_locations.items():
+            _state[loc] += (
+                np.uint8(Player.SCOUT.power)
+                if _agent == self.scout
+                else np.uint8(Player.GUARD.power)
+            )
+
+        return _state

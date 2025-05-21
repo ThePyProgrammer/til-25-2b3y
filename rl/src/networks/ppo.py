@@ -192,7 +192,8 @@ class PPOActorCritic(nn.Module):
 
     def get_action_and_value(
         self,
-        map_input,
+        actor_input,
+        critic_input=None,
         action=None,
         deterministic=False
     ):
@@ -211,13 +212,14 @@ class PPOActorCritic(nn.Module):
             value: State value estimate
         """
         # Get actor embedding
-        actor_embedding = self.actor_encoder(map_input)
+        actor_embedding = self.actor_encoder(actor_input)
 
         # Get critic embedding (same as actor if shared)
         if self.shared_encoder:
             critic_embedding = actor_embedding
         else:
-            critic_embedding = self.critic_encoder(map_input)
+            critic_input = critic_input if critic_input is not None else actor_input
+            critic_embedding = self.critic_encoder(critic_input)
 
         # Get state value
         value = self.critic(critic_embedding)
