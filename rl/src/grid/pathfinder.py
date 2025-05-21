@@ -256,8 +256,8 @@ class Pathfinder:
         If use_viewcone is False, only the path efficiency (reward/distance) is considered.
         When the agent is a guard, also avoids actions that would lead to other guard positions.
         """
-        # First, evaluate all candidate actions
-        scored_actions = []
+        # First, evaluate all candidate actions and group by first_action
+        action_data_map: dict[Action, list[tuple[Optional[DirectionalNode], float, float]]] = {}
 
         for reward_pos, reward_value in reward_positions:
             if reward_pos in best_paths_to_rewards:
@@ -267,40 +267,57 @@ class Pathfinder:
                     continue
 
                 # Skip actions that would lead to guard positions
-                if hasattr(self, 'guard_positions') and self.guard_positions and first_action in node.children:
+                if self.guard_positions and first_action in node.children:
                     next_node = node.children[first_action]
                     if self._is_blocked_by_guard(next_node.position):
                         continue
 
+
                 # Calculate path efficiency score
-                if distance == 0:
-                    path_ratio = float('inf')
+                if distance == 0: # Agent is already at the reward or a path of 0 cost
+                    path_ratio = float('inf') if reward_value > 0 else 0 # Infinite if positive reward, 0 otherwise
                 else:
                     path_ratio = reward_value / distance
 
                 # Calculate view score if using viewcone
-                view_score = 0
+                view_score = 0.0  # Default view_score
                 if self.config.use_viewcone:
-                    raise NotImplementedError("use_viewcone is not implemented")
-                    # view_tiles = self._get_viewcone_tiles(node.position, node.direction)
+                    raise NotImplementedError("use_viewcone scoring is not implemented")
 
-                # Store action with its scores
-                scored_actions.append((first_action, node, view_score, path_ratio))
+
+                if first_action not in action_data_map:
+                    action_data_map[first_action] = []
+                # Store action with its scores: (originating_node_for_this_path_segment, view_score, path_ratio)
+                action_data_map[first_action].append((node, view_score, path_ratio))
 
         # If no candidates found, return None
-        if not scored_actions:
+        if not action_data_map:
+            return None
+
+        # Calculate average scores for each action
+        # Action -> (avg_view_score, avg_path_ratio)
+        averaged_scores: list[tuple[Action, float, float]] = []
+        for action, scores_list in action_data_map.items():
+            if not scores_list:
+                continue
+            avg_view_score = sum(s[1] for s in scores_list) / len(scores_list)
+            avg_path_ratio = sum(s[2] for s in scores_list) / len(scores_list)
+            averaged_scores.append((action, avg_view_score, avg_path_ratio))
+
+        if not averaged_scores:
             return None
 
         # Sort actions by appropriate criteria based on use_viewcone flag
         if self.config.use_viewcone:
-            # Sort by view score (primary) and path ratio (secondary)
-            scored_actions.sort(key=lambda x: (x[2], x[3]), reverse=True)
+            # Sort by average view score (primary, descending) and average path ratio (secondary, descending)
+            # Current view_score is always 0 due to NotImplementedError, so this effectively sorts by path_ratio only for now.
+            averaged_scores.sort(key=lambda x: (x[1], x[2]), reverse=True)
         else:
-            # Sort only by path ratio when not using viewcone
-            scored_actions.sort(key=lambda x: x[3], reverse=True)
+            # Sort only by average path ratio (descending) when not using viewcone
+            averaged_scores.sort(key=lambda x: x[2], reverse=True)
 
         # Return the best action
-        return scored_actions[0][0]
+        return averaged_scores[0][0]
 
     def _get_viewcone_tiles(self, position: Point, direction: Direction) -> list[Point]:
         """

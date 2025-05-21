@@ -26,6 +26,7 @@ class TrajectoryTree:
         regenerate_edge_threshold: int = 4,
         max_backtrack: int = 3,
         num_samples: int = 2,  # Number of trajectory samples per endpoint
+        fit_new_trajectories: bool = False,
     ):
         """
         Initialize a TrajectoryTree with the agent's starting position and direction.
@@ -44,6 +45,7 @@ class TrajectoryTree:
         self.regenerate_edge_threshold = regenerate_edge_threshold
         self.max_backtrack = max_backtrack
         self.num_samples = num_samples
+        self.fit_new_trajectories = fit_new_trajectories
 
         self.num_step = 0
 
@@ -175,7 +177,7 @@ class TrajectoryTree:
 
         self._clean_up_trajectories()
 
-        if len(self.trajectories) == 0 and not before_step:
+        if len(self.trajectories) == 0 and not before_step and self.fit_new_trajectories:
             self.trajectories = create_trajectories_from_constraints(
                 self.roots,
                 self.temporal_constraints,
