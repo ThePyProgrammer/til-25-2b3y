@@ -6,6 +6,7 @@
 import random
 from typing import Any
 
+import torch
 import numpy as np
 
 # Add paths for imports
@@ -16,13 +17,32 @@ from grid.map import Map
 from grid.utils import Point
 from grid.map import Direction
 from grid.pathfinder import Pathfinder, PathfinderConfig
+from networks.ppo import PPOActorCritic
+
+CHANNELS, MAP_SIZE, ACTION_DIM = 12, 31, 5
 
 
 class RLManager:
-
     def __init__(self):
-        # This is where you can initialize your model and any static
-        # configurations.
+        self.scout_policy = PPOActorCritic(
+            action_dim=ACTION_DIM,
+            map_size=MAP_SIZE,
+            channels=CHANNELS,
+            encoder_type="tiny",
+            shared_encoder=False,
+            actor_hidden_dims=[32, 32],
+            critic_hidden_dims=[32, 32],
+            encoder_kwargs={
+                "use_center_only": True
+            }
+        )
+
+        checkpoint = torch.load("./models/scout.pt")
+        self.scout_policy.load_state_dict(checkpoint['model_state_dict'])
+
+        self.scout_policy.eval()
+
+
         self.role = None  # 'scout' or 'guard'
         self.recon_map = Map()
 
@@ -76,12 +96,11 @@ class RLManager:
 
         # Different logic for scout and guard
         if self.role == 'scout':
-            location = observation['location']
-            direction = observation['direction']
+            self.recon_map(observation)
 
-            action = random.choice([0, 1, 2, 3])
+            action, _, _ = self.scout_policy.actor.sample_action(self.recon_map.get_tensor(), deterministic=True)
 
-            return action
+            return int(action.item())
         else:
             # Guard uses the map for navigation
             try:
