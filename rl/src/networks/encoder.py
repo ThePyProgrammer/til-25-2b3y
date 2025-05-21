@@ -198,7 +198,7 @@ class TinyMapEncoder(MapEncoder):
             embedding_dim=embedding_dim,
             conv_layers=[8, 16, 16, 32],
             kernel_sizes=[7, 3, 3, 3],  # Larger initial kernel to capture more context
-            strides=[1, 1, 2, 2],       # More aggressive downsampling
+            strides=[1, 2, 2, 1],       # More aggressive downsampling
             fc_layers=[],          # Smaller FC layer
             use_batch_norm=True,     # Skip batch norm for CPU efficiency
             dropout_rate=0.1,        # Skip dropout for inference speed

@@ -45,7 +45,7 @@ def main(args):
     env = setup_environment(args, REWARDS_DICT)
 
     # Extract observation shape information
-    CHANNELS, MAP_SIZE, ACTION_DIM = 12, 31, 4
+    CHANNELS, MAP_SIZE, ACTION_DIM = 12, 31, 5
     print(f"Detected Map size: {MAP_SIZE}, Channels: {CHANNELS}, Action Dim: {ACTION_DIM}")
 
     # Initialize model
@@ -57,7 +57,7 @@ def main(args):
         encoder_type="tiny",
         shared_encoder=False,
         device=device,
-        use_center_only=False,
+        use_center_only=True,
     )
 
     if args.orthogonal_init:
