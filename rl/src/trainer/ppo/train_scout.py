@@ -20,7 +20,7 @@ from trainer.ppo.utils.scheduler import create_scheduler
 from networks.ppo import orthogonal_init
 
 from utils import count_parameters
-from utils.wrapper import ScoutWrapper, CustomRewardsWrapper, TimeoutResetWrapper
+from utils.wrapper import ScoutWrapper, CustomRewardsWrapper, CustomStateWrapper, TimeoutResetWrapper
 
 from til_environment import gridworld
 
@@ -32,7 +32,7 @@ REWARDS_DICT = {
     RewardNames.SCOUT_MISSION: 1,
     # RewardNames.WALL_COLLISION: -0.4,
     # RewardNames.SCOUT_TRUNCATION: 2.5,
-    # RewardNames.STATIONARY_PENALTY: -0.4,
+    # RewardNames.STATIONARY_PENALTY: -0.2,
     # RewardNames.SCOUT_STEP: 0.2
 }
 
@@ -45,7 +45,7 @@ def main(args):
     set_seeds(args.seed)
 
     env = gridworld.env(
-        env_wrappers=[TimeoutResetWrapper, CustomRewardsWrapper, ScoutWrapper],
+        env_wrappers=[TimeoutResetWrapper, CustomStateWrapper, ScoutWrapper],
         render_mode="human" if args.render else None,  # Render the map if requested
         debug=False,  # Enable debug mode
         novice=False,  # Use same map layout every time (for Novice teams only)
@@ -53,7 +53,7 @@ def main(args):
     )
 
     # Reset the environment with seed
-    # env.set_num_active_guards(args.num_guards)
+    env.set_num_active_guards(args.num_guards)
     env.reset(seed=args.seed)
 
     # Extract observation shape information

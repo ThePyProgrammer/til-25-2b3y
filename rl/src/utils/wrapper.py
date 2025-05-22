@@ -72,6 +72,7 @@ class CustomRewardsWrapper(BaseWrapper[AgentID, ObsType, ActionType]):
 
         super().step(action)
 
+class CustomStateWrapper(BaseWrapper[AgentID, ObsType, ActionType]):
     def state(self):
         _state = np.copy(super().state())
 

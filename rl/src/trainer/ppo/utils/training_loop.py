@@ -2,6 +2,7 @@ import random
 
 import torch
 import numpy as np
+from tqdm import tqdm
 
 from .model_utils import save_checkpoint
 from .ppo_update import ppo_update, RewardScaling
@@ -44,8 +45,6 @@ def train_scout_episode(
     last_scout_step_info = None  # Clear previous step
     model.to(device)
 
-    # Clear the buffer at the start of each episode
-    buffer.clear()
     scout_reward = 0
 
     steps = 0
@@ -54,6 +53,8 @@ def train_scout_episode(
 
     # Inner loop for one episode
     while not done:
+        steps += 1
+        
         # Get observation, reward, etc. for the current agent's turn
         observation, reward, termination, truncation, info = env.last()
 
@@ -162,7 +163,7 @@ def train_scout_episode(
         env.step(action)
 
     # Print episode summary
-    print(f"Collected {len(buffer)} scout steps in this episode with a reward of {scout_reward:.1f}.")
+    # print(f"Collected {len(buffer)} scout steps in this episode with a reward of {scout_reward:.1f}.")
 
     return steps, scout_reward
 
@@ -236,13 +237,12 @@ def evaluate_scout(env, model, args, device, seed):
         # Run one episode
         while not done:
             # Get observation, reward, etc. for the current agent's turn
-            observation, reward, termination, truncation, info = env.agent_last(env.scout)
+            observation, reward, termination, truncation, info = env.last()
 
             done = termination or truncation
 
             # Check if the current agent is done
             if done:
-                reward = env.rewards[env.scout]
                 episode_reward += reward
                 break
             else:
@@ -252,6 +252,8 @@ def evaluate_scout(env, model, args, device, seed):
             location = observation["location"]
             position = Point(int(location[0]), int(location[1]))
             direction = Direction(observation["direction"])
+
+            env.maps[env.scout](observation)
 
             map_input = env.maps[env.scout].get_tensor().unsqueeze(0)  # Get tensor and add batch dim
             global_input = tiles_to_tensor(
@@ -325,8 +327,10 @@ def train_scout(env, model, optimizer, scheduler, buffer, args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Initialize tracking variables
+    rewards_since_update = 0
     steps_since_save = 0
     steps_since_eval = 0
+    steps_since_update = 0
     episodes_since_update = 0
     episodes_in_buffer = 0
     timesteps_elapsed = 0  # Will be overridden if resuming
@@ -336,37 +340,39 @@ def train_scout(env, model, optimizer, scheduler, buffer, args):
 
     # Main training loop
     while timesteps_elapsed < args.timesteps:
-        # Run one episode
-        steps_elapsed, reward = train_scout_episode(
-            env,
-            model,
-            optimizer,
-            scheduler,
-            buffer,
-            args,
-            device,
-        )
 
-        # Update step counters
-        # Calculate the steps taken in this episode
-        timesteps_elapsed += steps_elapsed
-        steps_since_eval += steps_elapsed
-        steps_since_save += steps_elapsed
-        episodes_since_update += 1
-        episodes_in_buffer += 1
+        for e in tqdm(range(args.episodes_per_update), desc="Collecting episodes"):
+            steps_elapsed, rewards = train_scout_episode(
+                env,
+                model,
+                optimizer,
+                scheduler,
+                buffer,
+                args,
+                device,
+            )
 
-        # Run evaluation if needed
+            rewards_since_update += rewards
+            timesteps_elapsed += steps_elapsed
+            steps_since_eval += steps_elapsed
+            steps_since_save += steps_elapsed
+            steps_since_update += steps_elapsed
+            episodes_since_update += 1
+            episodes_in_buffer += 1
+
         if steps_since_eval >= args.eval_interval:
             steps_since_eval = 0
             evaluate_scout(env, model, args, device, args.seed + timesteps_elapsed + 10000)
-            # Here you could log these metrics to a file or tracking system if needed
 
         # Perform PPO update if enough episodes have been collected
         if not buffer.is_empty() and episodes_since_update >= args.episodes_per_update:
-            episodes_since_update = 0
 
-            print("Performing PPO update.")
+            print(f"Performing PPO update with \n\t{episodes_since_update} episodes\n\t{steps_since_update} steps\n\t{(rewards_since_update / episodes_since_update):.2f} average episode reward")
             update_losses = update_model(buffer, model, optimizer, scheduler, reward_scaler, args, device)
+            
+            rewards_since_update = 0
+            episodes_since_update = 0
+            steps_since_update = 0
 
             # Log losses
             print(f"Timestep {timesteps_elapsed}: "
