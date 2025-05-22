@@ -292,26 +292,18 @@ class Map:
             Direction.RIGHT: {
                 Action.FORWARD: 'right',
                 Action.BACKWARD: 'left',
-                Action.LEFT: 'top',
-                Action.RIGHT: 'bottom'
             },
             Direction.DOWN: {
                 Action.FORWARD: 'bottom',
                 Action.BACKWARD: 'top',
-                Action.LEFT: 'right',
-                Action.RIGHT: 'left'
             },
             Direction.LEFT: {
                 Action.FORWARD: 'left',
                 Action.BACKWARD: 'right',
-                Action.LEFT: 'bottom',
-                Action.RIGHT: 'top'
             },
             Direction.UP: {
                 Action.FORWARD: 'top',
                 Action.BACKWARD: 'bottom',
-                Action.LEFT: 'left',
-                Action.RIGHT: 'right'
             }
         }
 
@@ -323,7 +315,7 @@ class Map:
             invalid_actions = []
 
             # Check each action
-            for action in [Action.FORWARD, Action.BACKWARD, Action.LEFT, Action.RIGHT]:
+            for action in [Action.FORWARD, Action.BACKWARD]:
                 # Get the wall location that would block this action from this direction
                 wall_location = blocking_walls[direction][action]
 

@@ -26,7 +26,7 @@ class TrajectoryTree:
         regenerate_edge_threshold: int = 4,
         max_backtrack: int = 3,
         num_samples: int = 2,  # Number of trajectory samples per endpoint
-        fit_new_trajectories: bool = False,
+        fit_new_trajectories: bool = True,
     ):
         """
         Initialize a TrajectoryTree with the agent's starting position and direction.
@@ -222,7 +222,7 @@ class TrajectoryTree:
         density = np.zeros((self.size, self.size), dtype=np.float32)
 
         if not self.trajectories:
-            return density
+            density = self.map.time_since_update
 
         # Count trajectories passing through each cell
         for trajectory in self.trajectories:
@@ -240,9 +240,6 @@ class TrajectoryTree:
 
         # Normalize to get probability density
         total = density.sum()
-        if total == 0:
-            density = self.map.time_since_update
-            total = density.sum()
 
         if total > 0:
             density = density / total
@@ -266,7 +263,7 @@ class TrajectoryTree:
         density = np.zeros((self.size, self.size), dtype=np.float32)
 
         if not self.trajectories:
-            return density
+            density = self.map.time_since_update
 
         # Distribute density across all nodes in each trajectory
         for trajectory in self.trajectories:
