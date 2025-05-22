@@ -1,54 +1,17 @@
-import threading
+import random
 
 import torch
+import numpy as np
 
-from .agent_utils import process_scout_step, process_guard_step, process_other_agents, init_agents
 from .model_utils import save_checkpoint
 from .ppo_update import ppo_update, RewardScaling
 
+from grid.utils import Point, Direction, Action
+from grid.map import tiles_to_tensor, map_to_tiles
+from grid.node import DirectionalNode
 
-class TimeoutError(Exception):
-    pass
 
-def timeout(timeout_seconds):
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            # Store the result
-            result = None
-            exception = None
-
-            # Define the thread function
-            def worker():
-                nonlocal result, exception
-                try:
-                    result = func(*args, **kwargs)
-                except Exception as e:
-                    exception = e
-
-            # Create and start the thread
-            thread = threading.Thread(target=worker)
-            thread.daemon = True
-            thread.start()
-
-            # Wait for completion or timeout
-            thread.join(timeout_seconds)
-            if thread.is_alive():
-                # Thread is still running after timeout
-                raise TimeoutError(f"Function timed out after {timeout_seconds} seconds")
-
-            # If there was an exception in the thread, raise it
-            if exception:
-                raise exception
-
-            return result
-        return wrapper
-    return decorator
-
-@timeout(20)
-def reset_environment(env, seed):
-    return env.reset(seed=seed)
-
-def train_episode(
+def train_scout_episode(
     env,
     model,
     optimizer,
@@ -56,12 +19,10 @@ def train_episode(
     buffer,
     args,
     device,
-    last_scout_step_info,
-    timesteps_elapsed,
-    steps_since_save
-):
+    seed = None
+) -> tuple[int, float]:
     """
-    Run a single training episode
+    Run a single training episode for scout
 
     Args:
         env: Gridworld environment
@@ -72,27 +33,15 @@ def train_episode(
         buffer: Experience buffer
         args: Command line arguments
         device: Compute device (CPU/CUDA)
-        last_scout_step_info: Info about the last scout step
-        timesteps_elapsed: Current timestep count
-        steps_since_save: Steps since the last checkpoint save
+        seed: seed
 
-    Returns:
-        tuple: (updated last_scout_step_info, updated timesteps_elapsed,
-                updated steps_since_save, updated episodes_since_update,
-                scout_reward, whether training should continue)
     """
-    seed = args.seed + timesteps_elapsed
+    if seed is None:
+        seed = random.randint(0, 999999)
 
-    # Reset environment with a varying seed
-    while True:
-        try:
-            reset_environment(env, seed)
-            break
-        except TimeoutError as _:
-            seed += 1
+    env.reset(seed=seed)
 
     last_scout_step_info = None  # Clear previous step
-    agents = init_agents(env, args.num_guards)
     model.to(device)
 
     # Clear the buffer at the start of each episode
@@ -101,16 +50,18 @@ def train_episode(
 
     steps = 0
 
+    done = False
+
     # Inner loop for one episode
-    for agent in env.agent_iter():
+    while not done:
         # Get observation, reward, etc. for the current agent's turn
         observation, reward, termination, truncation, info = env.last()
 
-        # Check if the current agent is done
-        if termination or truncation:
-            reward = env.rewards[env.scout]
-            scout_reward += reward
+        done = termination or truncation
+        scout_reward += reward
 
+        # Check if the current agent is done
+        if done:
             # If the scout had an unfinished step when the episode ended,
             # finalize it with the final reward/done
             if last_scout_step_info is not None:
@@ -124,55 +75,96 @@ def train_episode(
                     done=True  # Episode ended
                 )
                 last_scout_step_info = None
+
             break  # End episode
+        else:
+            previous_action = None
+            if last_scout_step_info is not None:
+                previous_action = last_scout_step_info['action']
+                # S_{t-1}, A_{t-1}, log_prob_{t-1}, V_{t-1} are in last_scout_step_info
+                # R_{t-1}, done_{t-1} are available now from env.last()
+                buffer.add(
+                    actor_input=last_scout_step_info['actor_input'],
+                    critic_input=last_scout_step_info['critic_input'],
+                    action=last_scout_step_info['action'],
+                    log_prob=last_scout_step_info['log_prob'],
+                    value=last_scout_step_info['value'],
+                    reward=reward,  # Reward for the step that ended just before this turn
+                    done=termination or truncation  # Done for the step that ended just before this turn
+                )
+                last_scout_step_info = None  # Clear as step is finalized
 
-        # Process based on agent type
-        if agent == env.scout:
-            scout_reward += reward
+        location = observation["location"]
+        position = Point(int(location[0]), int(location[1]))
+        direction = Direction(observation["direction"])
+        env.maps[env.scout](observation)
 
-            # Process scout step
-            last_scout_step_info, action = process_scout_step(
-                agent,
-                observation,
-                reward,
-                termination,
-                truncation,
-                agents,
-                model,
-                device,
-                buffer,
-                last_scout_step_info,
-                env,
-                args
-            )
+        map_input = env.maps[env.scout].get_tensor().unsqueeze(0)  # Get tensor and add batch dim
+        global_input = tiles_to_tensor(
+            map_to_tiles(env.state().transpose()),
+            location,
+            direction,
+            16,
+            np.zeros((16, 16)),
+            env.maps[env.scout].step_counter
+        ).unsqueeze(0)
 
-            # Perform the action
-            env.step(action)
-            steps += 1
+        node: DirectionalNode = env.maps[env.scout].get_node(position, direction)
+        valid_actions = set(node.children.keys())
 
-            # End if we've reached the maximum timesteps
-            if timesteps_elapsed >= args.timesteps:
-                should_continue = False
+        if args.global_critic:
+            critic_input = global_input
+        else:
+            critic_input = map_input
+
+        # Ensure tensor dtype matches model dtype (bfloat16 if enabled)
+        if args.bfloat16:
+            map_input = map_input.to(torch.bfloat16)
+            critic_input = critic_input.to(torch.bfloat16)
+
+        map_input = map_input.to(device)
+        critic_input = critic_input.to(device)
+
+        # Get action (A_t), log_prob, value (V(S_t)) from the model
+        action = None
+
+        max_retries = 3
+        tries = 0
+
+        while action is None or (
+            action == previous_action
+            and previous_action in [Action.LEFT, Action.RIGHT]
+            and args.prevent_180_turns
+        ) or (
+            action not in valid_actions
+            and args.prevent_invalid_actions
+        ):
+            with torch.no_grad():
+
+                action, log_prob, entropy, value = model.get_action_and_value(map_input, critic_input, deterministic=False)
+
+            # Store info for this step to be finalized in the next scout turn
+            last_scout_step_info = {
+                'actor_input': map_input,
+                'critic_input': critic_input,
+                'action': action.item(),
+                'log_prob': log_prob.item(),
+                'value': value.item(),
+            }
+
+            action = action.item()
+
+            tries += 1
+
+            if tries >= max_retries:
                 break
 
-        elif agent in agents['names']['guards']:
-            # Process guard step
-            action = process_guard_step(agent, observation, agents, env, args)
-            env.step(action)
-
-        else:
-            # Process other agents
-            action = process_other_agents(agent, env)
-            env.step(action)
+        env.step(action)
 
     # Print episode summary
-    print(f"Collected {len(buffer)} scout steps in this episode with a reward of {scout_reward}.")
+    print(f"Collected {len(buffer)} scout steps in this episode with a reward of {scout_reward:.1f}.")
 
-    return (
-        last_scout_step_info,
-        scout_reward,
-        steps
-    )
+    return steps, scout_reward
 
 def update_model(buffer, model, optimizer, scheduler, reward_scaler, args, device):
     """
@@ -210,7 +202,7 @@ def update_model(buffer, model, optimizer, scheduler, reward_scaler, args, devic
 
     return update_losses
 
-def evaluate(env, model, args, device, current_timestep):
+def evaluate_scout(env, model, args, device, seed):
     """
     Evaluate the model over multiple episodes without training
 
@@ -228,82 +220,91 @@ def evaluate(env, model, args, device, current_timestep):
     model.eval()
 
     total_rewards = 0
-    total_episode_length = 0
+    total_steps = 0
     num_episodes = 8
-
-    print(f"\nEvaluating model at timestep {current_timestep}...")
 
     # Run multiple evaluation episodes
     for eval_ep in range(num_episodes):
         # Reset environment with a varying seed
-        env.reset(seed=args.seed + current_timestep + eval_ep + 10000)  # Offset to avoid training seeds
-        agents = init_agents(env, args.num_guards)
+        env.reset(seed=seed + eval_ep)
+
         episode_reward = 0
-        episode_length = 0
+        episode_steps = 0
+
+        done = False
 
         # Run one episode
-        for agent in env.agent_iter():
+        while not done:
             # Get observation, reward, etc. for the current agent's turn
-            observation, reward, termination, truncation, info = env.last()
+            observation, reward, termination, truncation, info = env.agent_last(env.scout)
+
+            done = termination or truncation
 
             # Check if the current agent is done
-            if termination or truncation:
+            if done:
                 reward = env.rewards[env.scout]
                 episode_reward += reward
                 break
-
-            # Process based on agent type
-            if agent == env.scout:
-                episode_reward += reward
-                episode_length += 1
-
-                agents['maps']['scout'](observation)
-                map_input = agents['maps']['scout'].get_tensor().unsqueeze(0)
-
-                if args.bfloat16:
-                    map_input = map_input.to(torch.bfloat16)
-
-                map_input = map_input.to(device)
-
-                # Process scout action without storing in buffer
-                with torch.no_grad():
-                    action, _, _, _ = model.get_action_and_value(map_input, deterministic=True)
-
-                action = action.item()
-
-                env.step(action)
-
-            elif agent in agents['names']['guards']:
-                # Process guard step
-                action = process_guard_step(agent, observation, agents, env, args)
-                env.step(action)
-
             else:
-                # Process other agents
-                action = process_other_agents(agent, env)
-                env.step(action)
+                episode_reward += reward
+                episode_steps += 1
+
+            location = observation["location"]
+            position = Point(int(location[0]), int(location[1]))
+            direction = Direction(observation["direction"])
+
+            map_input = env.maps[env.scout].get_tensor().unsqueeze(0)  # Get tensor and add batch dim
+            global_input = tiles_to_tensor(
+                map_to_tiles(env.state().transpose()),
+                location,
+                direction,
+                16,
+                np.zeros((16, 16)),
+                env.maps[env.scout].step_counter
+            ).unsqueeze(0)
+
+            if args.global_critic:
+                critic_input = global_input
+            else:
+                critic_input = map_input
+
+            # Ensure tensor dtype matches model dtype (bfloat16 if enabled)
+            if args.bfloat16:
+                map_input = map_input.to(torch.bfloat16)
+                critic_input = critic_input.to(torch.bfloat16)
+
+            map_input = map_input.to(device)
+            critic_input = critic_input.to(device)
+
+            # Get action from the model (deterministic for evaluation)
+            with torch.no_grad():
+                action, _, _, _ = model.get_action_and_value(map_input, critic_input, deterministic=True)
+
+            action = action.item()
+            env.step(action)
 
         # Track episode statistics
         total_rewards += episode_reward
-        total_episode_length += episode_length
+        total_steps += episode_steps
+        print(f"  Episode {eval_ep+1}: Reward = {episode_reward:.2f}, Steps = {episode_steps}")
 
     # Set model back to training mode
     model.train()
 
     # Calculate average metrics
     avg_reward = total_rewards / num_episodes
-    avg_episode_length = total_episode_length / num_episodes
+    avg_steps = total_steps / num_episodes
 
     print("Evaluation results:")
     print(f"  Average reward: {avg_reward:.2f}")
-    print(f"  Average episode length: {avg_episode_length:.2f}")
+    print(f"  Average episode steps: {avg_steps:.2f}")
 
     return {
         "avg_reward": avg_reward,
-        "avg_episode_length": avg_episode_length
+        "avg_episode_length": avg_steps
     }
 
-def train(env, model, optimizer, scheduler, buffer, args):
+def train_scout(env, model, optimizer, scheduler, buffer, args):
     """
     Main training loop
 
@@ -324,7 +325,6 @@ def train(env, model, optimizer, scheduler, buffer, args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Initialize tracking variables
-    last_scout_step_info = None
     steps_since_save = 0
     steps_since_eval = 0
     episodes_since_update = 0
@@ -337,11 +337,7 @@ def train(env, model, optimizer, scheduler, buffer, args):
     # Main training loop
     while timesteps_elapsed < args.timesteps:
         # Run one episode
-        (
-            last_scout_step_info,
-            scout_reward,
-            steps_elapsed
-        ) = train_episode(
+        steps_elapsed, reward = train_scout_episode(
             env,
             model,
             optimizer,
@@ -349,9 +345,6 @@ def train(env, model, optimizer, scheduler, buffer, args):
             buffer,
             args,
             device,
-            last_scout_step_info,
-            timesteps_elapsed,
-            steps_since_save
         )
 
         # Update step counters
@@ -365,7 +358,7 @@ def train(env, model, optimizer, scheduler, buffer, args):
         # Run evaluation if needed
         if steps_since_eval >= args.eval_interval:
             steps_since_eval = 0
-            evaluate(env, model, args, device, timesteps_elapsed)
+            evaluate_scout(env, model, args, device, args.seed + timesteps_elapsed + 10000)
             # Here you could log these metrics to a file or tracking system if needed
 
         # Perform PPO update if enough episodes have been collected

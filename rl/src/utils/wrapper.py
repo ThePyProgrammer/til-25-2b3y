@@ -33,7 +33,7 @@ class CustomRewardsWrapper(BaseWrapper[AgentID, ObsType, ActionType]):
     ):
         super().__init__(env)
 
-        self.action_history = {}
+        self.action_history: dict[str, list[int]] = {}
 
     def reset(self, *args, **kwargs):
         self.action_history = {}
@@ -92,9 +92,10 @@ class MapWrapper(BaseWrapper[AgentID, ObsType, ActionType]):
     ):
         super().__init__(env)
 
-        self.maps = {}
-        self.pathfinders = {}
-        self.active_guards = []
+        self.maps: dict[str, Map] = {}
+        self.pathfinders: dict[str, Pathfinder] = {}
+        self.active_guards: list[str] = []
+        self.num_active_guards: int = 0
 
     def set_num_active_guards(self, n: int):
         self.num_active_guards = n
@@ -130,8 +131,19 @@ class MapWrapper(BaseWrapper[AgentID, ObsType, ActionType]):
         self.init_maps()
 
 class ScoutWrapper(MapWrapper):
+    def __init__(
+        self,
+        env: AECEnv[AgentID, ObsType, ActionType],
+    ):
+        super().__init__(env)
+
+        self.scout_reward: float = 0
+
     def iter_guard(self, guard):
         observation, reward, termination, truncation, info = self.agent_last(guard)
+
+        if termination or truncation:
+            return True
 
         if guard in self.pathfinders:
             self.maps[guard](observation)
@@ -148,27 +160,39 @@ class ScoutWrapper(MapWrapper):
 
         super().step(action)
 
+        return False
+
 
     def step(self, action: ActionType):
-        while self.agent_selection != self.scout:
-            self.iter_guard(self.agent_selection)
+        self.scout_reward = 0
+
+        done = False
+        while self.agent_selection != self.scout and not done:
+            done = self.iter_guard(self.agent_selection)
+
+        if done:
+            return
 
         assert self.agent_selection == self.scout
 
-        scout = self.agent_selection
-
-        if scout in self.maps:
-            observation = self.observe(scout)
-
-            self.maps[scout](observation)
-
         super().step(action)
 
+        done = False
+        while self.agent_selection != self.scout and not done:
+            done = self.iter_guard(self.agent_selection)
+
     def agent_last(self, agent):
-        observation = self.observe(agent)
+        observation = self.observations[agent]
         reward = self.rewards[agent]
         termination = self.terminations[agent]
         truncation = self.truncations[agent]
-        info = self.get_info(agent)
+        info = self.infos[agent]
 
         return observation, reward, termination, truncation, info
+
+    def reset(self, *args, **kwargs):
+        super().reset(*args, **kwargs)
+
+        done = False
+        while self.agent_selection != self.scout and not done:
+            done = self.iter_guard(self.agent_selection)
