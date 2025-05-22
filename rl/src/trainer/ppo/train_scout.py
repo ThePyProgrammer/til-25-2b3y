@@ -11,15 +11,18 @@ from til_environment.types import RewardNames
 
 # Import utility modules
 from trainer.ppo.utils.args import parse_args
-from trainer.ppo.utils.environment import setup_environment, set_seeds
+from trainer.ppo.utils.environment import set_seeds
 from trainer.ppo.utils.model_utils import initialize_model, initialize_optimizer, load_checkpoint, apply_model_precision
-from trainer.ppo.utils.training_loop import train
+from trainer.ppo.utils.training_loop import train_scout
 from trainer.ppo.utils.buffer import ExperienceBuffer
 from trainer.ppo.utils.scheduler import create_scheduler
 
 from networks.ppo import orthogonal_init
 
 from utils import count_parameters
+from utils.wrapper import ScoutWrapper, CustomRewardsWrapper, TimeoutResetWrapper
+
+from til_environment import gridworld
 
 
 REWARDS_DICT = {
@@ -27,9 +30,9 @@ REWARDS_DICT = {
     RewardNames.SCOUT_CAPTURED: -10,
     RewardNames.SCOUT_RECON: 0.2,
     RewardNames.SCOUT_MISSION: 1,
-    RewardNames.WALL_COLLISION: -0.4,
+    # RewardNames.WALL_COLLISION: -0.4,
     # RewardNames.SCOUT_TRUNCATION: 2.5,
-    RewardNames.STATIONARY_PENALTY: -0.4,
+    # RewardNames.STATIONARY_PENALTY: -0.4,
     # RewardNames.SCOUT_STEP: 0.2
 }
 
@@ -41,8 +44,20 @@ def main(args):
     # Set seeds for reproducibility
     set_seeds(args.seed)
 
-    # Set up environment
-    env = setup_environment(args, REWARDS_DICT)
+    env = gridworld.env(
+        env_wrappers=[TimeoutResetWrapper, CustomRewardsWrapper, ScoutWrapper],
+        render_mode="human" if args.render else None,  # Render the map if requested
+        debug=False,  # Enable debug mode
+        novice=False,  # Use same map layout every time (for Novice teams only)
+        rewards_dict=REWARDS_DICT
+    )
+
+    # Reset the environment with seed
+    # env.set_num_active_guards(args.num_guards)
+    env.reset(seed=args.seed)
+    import time
+
+    time.sleep(10)
 
     # Extract observation shape information
     CHANNELS, MAP_SIZE, ACTION_DIM = 12, 31, 5
@@ -84,7 +99,7 @@ def main(args):
     buffer = ExperienceBuffer()
 
     # Run training loop
-    train(env, model, optimizer, scheduler, buffer, args)
+    train_scout(env, model, optimizer, scheduler, buffer, args)
 
     # Close environment
     env.close()
