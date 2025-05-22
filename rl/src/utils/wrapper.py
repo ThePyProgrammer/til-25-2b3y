@@ -11,7 +11,20 @@ from til_environment.gridworld import NUM_ITERS
 from grid.map import Map
 from grid.pathfinder import Pathfinder, PathfinderConfig
 from grid.utils import Point, Direction
+from utils.env import reset_environment
 
+
+class TimeoutResetWrapper(BaseWrapper[AgentID, ObsType, ActionType]):
+    def __init__(
+        self,
+        env: AECEnv[AgentID, ObsType, ActionType],
+    ):
+        super().__init__(env)
+
+        self.timeout = 10
+
+    def reset(self, seed=None, **kwargs):
+        reset_environment(super(), seed=seed, **kwargs)
 
 class CustomRewardsWrapper(BaseWrapper[AgentID, ObsType, ActionType]):
     def __init__(
