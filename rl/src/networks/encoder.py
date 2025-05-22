@@ -21,15 +21,16 @@ class ConvBlock(nn.Module):
         super(ConvBlock, self).__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)
         self.use_batch_norm = use_batch_norm
+        self.activation = activation()
         if use_batch_norm:
             self.bn = nn.BatchNorm2d(out_channels)
-        self.activation = activation()
 
     def forward(self, x):
         x = self.conv(x)
+        x = self.activation(x)
         if self.use_batch_norm:
             x = self.bn(x)
-        return self.activation(x)
+        return x
 
 
 class MapEncoder(nn.Module):
@@ -210,15 +211,15 @@ class TinyMapEncoder(MapEncoder):
 class SmallMapEncoder(MapEncoder):
     """Smaller variant optimized for CPU inference."""
 
-    def __init__(self, map_size=16, channels=14, embedding_dim=256, use_center_only=False):
+    def __init__(self, map_size=16, channels=14, embedding_dim=64, use_center_only=False):
         super().__init__(
             map_size=map_size,
             channels=channels,
             embedding_dim=embedding_dim,
-            conv_layers=[16, 32, 32, 64],
+            conv_layers=[32, 32, 32, 32],
             kernel_sizes=[7, 3, 3, 3],  # Larger initial kernel to capture more context
             strides=[1, 1, 1, 1],       # More aggressive downsampling
-            fc_layers=[64],          # Smaller FC layer
+            fc_layers=[],          # Smaller FC layer
             use_batch_norm=True,     # Skip batch norm for CPU efficiency
             dropout_rate=0.1,        # Skip dropout for inference speed
             use_layer_norm=True,     # Keep layer norm for stability

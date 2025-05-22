@@ -11,6 +11,8 @@ from grid.utils import Point, Direction, Action
 from grid.map import tiles_to_tensor, map_to_tiles
 from grid.node import DirectionalNode
 
+from til_environment.types import RewardNames
+
 
 def train_scout_episode(
     env,
@@ -53,12 +55,13 @@ def train_scout_episode(
 
     # Inner loop for one episode
     while not done:
-        steps += 1
-        
         # Get observation, reward, etc. for the current agent's turn
         observation, reward, termination, truncation, info = env.last()
 
         done = termination or truncation
+        if termination:
+            reward = env.rewards[env.scout]
+
         scout_reward += reward
 
         # Check if the current agent is done
@@ -161,6 +164,7 @@ def train_scout_episode(
                 break
 
         env.step(action)
+        steps += 1
 
     # Print episode summary
     # print(f"Collected {len(buffer)} scout steps in this episode with a reward of {scout_reward:.1f}.")
@@ -212,7 +216,7 @@ def evaluate_scout(env, model, args, device, seed):
         model: PPO model
         args: Command line arguments
         device: Compute device (CPU/CUDA)
-        current_timestep: Current timestep count for seed generation
+        seed: Random seed for evaluation episodes
 
     Returns:
         dict: Dictionary containing evaluation metrics
@@ -222,7 +226,7 @@ def evaluate_scout(env, model, args, device, seed):
 
     total_rewards = 0
     total_steps = 0
-    num_episodes = 8
+    num_episodes = 32
 
     # Run multiple evaluation episodes
     for eval_ep in range(num_episodes):
@@ -231,7 +235,7 @@ def evaluate_scout(env, model, args, device, seed):
 
         episode_reward = 0
         episode_steps = 0
-
+        previous_action = None
         done = False
 
         # Run one episode
@@ -240,6 +244,8 @@ def evaluate_scout(env, model, args, device, seed):
             observation, reward, termination, truncation, info = env.last()
 
             done = termination or truncation
+            if termination:
+                reward = env.rewards[env.scout]
 
             # Check if the current agent is done
             if done:
@@ -265,6 +271,9 @@ def evaluate_scout(env, model, args, device, seed):
                 env.maps[env.scout].step_counter
             ).unsqueeze(0)
 
+            node: DirectionalNode = env.maps[env.scout].get_node(position, direction)
+            valid_actions = set(node.children.keys())
+
             if args.global_critic:
                 critic_input = global_input
             else:
@@ -278,11 +287,29 @@ def evaluate_scout(env, model, args, device, seed):
             map_input = map_input.to(device)
             critic_input = critic_input.to(device)
 
-            # Get action from the model (deterministic for evaluation)
-            with torch.no_grad():
-                action, _, _, _ = model.get_action_and_value(map_input, critic_input, deterministic=True)
+            # Get action from the model
+            action = None
+            max_retries = 3
+            tries = 0
 
-            action = action.item()
+            while action is None or (
+                action == previous_action
+                and previous_action in [Action.LEFT, Action.RIGHT]
+                and args.prevent_180_turns
+            ) or (
+                action not in valid_actions
+                and args.prevent_invalid_actions
+            ):
+                with torch.no_grad():
+                    action, _, _, _ = model.get_action_and_value(map_input, critic_input, deterministic=True)
+
+                action = action.item()
+                tries += 1
+
+                if tries >= max_retries:
+                    break
+
+            previous_action = action
             env.step(action)
 
         # Track episode statistics
@@ -369,7 +396,7 @@ def train_scout(env, model, optimizer, scheduler, buffer, args):
 
             print(f"Performing PPO update with \n\t{episodes_since_update} episodes\n\t{steps_since_update} steps\n\t{(rewards_since_update / episodes_since_update):.2f} average episode reward")
             update_losses = update_model(buffer, model, optimizer, scheduler, reward_scaler, args, device)
-            
+
             rewards_since_update = 0
             episodes_since_update = 0
             steps_since_update = 0

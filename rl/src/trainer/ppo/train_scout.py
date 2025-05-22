@@ -66,7 +66,7 @@ def main(args):
         map_size=MAP_SIZE,
         channels=CHANNELS,
         hidden_dims=[32, 32],
-        encoder_type="tiny",
+        encoder_type="small",
         shared_encoder=False,
         device=device,
         use_center_only=True,
@@ -76,6 +76,8 @@ def main(args):
         model.apply(orthogonal_init)
 
     print(f"Model has {count_parameters(model):,} parameters")
+
+    print(model)
 
     # Apply precision setting
     model = apply_model_precision(model, args.bfloat16)
