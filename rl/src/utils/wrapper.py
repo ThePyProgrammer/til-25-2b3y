@@ -1,3 +1,5 @@
+import random
+
 import numpy as np
 
 from pettingzoo.utils.env import ActionType, AECEnv, AgentID, ObsType
@@ -6,10 +8,12 @@ from pettingzoo.utils.wrappers.base import BaseWrapper
 from til_environment.types import RewardNames, Player
 from til_environment.gridworld import NUM_ITERS
 
+from grid.map import Map
+from grid.pathfinder import Pathfinder, PathfinderConfig
+from grid.utils import Point, Direction
 
-class CustomDictWrapper(BaseWrapper[AgentID, ObsType, ActionType]):
-    """This wrapper flattens the Dict observation space."""
 
+class CustomRewardsWrapper(BaseWrapper[AgentID, ObsType, ActionType]):
     def __init__(
         self,
         env: AECEnv[AgentID, ObsType, ActionType],
@@ -67,3 +71,91 @@ class CustomDictWrapper(BaseWrapper[AgentID, ObsType, ActionType]):
             )
 
         return _state
+
+class MapWrapper(BaseWrapper[AgentID, ObsType, ActionType]):
+    def __init__(
+        self,
+        env: AECEnv[AgentID, ObsType, ActionType],
+    ):
+        super().__init__(env)
+
+        self.maps = {}
+        self.pathfinders = {}
+        self.active_guards = []
+
+    def set_num_active_guards(self, n: int):
+        self.num_active_guards = n
+
+    def init_active_guards(self):
+        guards = [a for a in self.agents if a != self.scout]
+        random.shuffle(guards)
+        guards = guards[:self.num_active_guards]
+
+        self.active_guards = guards
+
+    def init_maps(self):
+        self.maps.clear()
+        self.pathfinders.clear()
+
+        for guard in self.active_guards:
+            self.maps[guard] = Map()
+            self.maps[guard].create_trajectory_tree(Point(0, 0))
+            self.pathfinders[guard] = Pathfinder(
+                self.maps[guard],
+                PathfinderConfig(
+                    use_viewcone=False,
+                    use_path_density=False
+                )
+            )
+
+        self.maps[self.scout] = Map()
+
+    def reset(self, *args, **kwargs):
+        super().reset(*args, **kwargs)
+
+        self.init_active_guards()
+        self.init_maps()
+
+class ScoutWrapper(MapWrapper):
+    def iter_guard(self, guard):
+        observation, reward, termination, truncation, info = self.agent_last(guard)
+
+        if guard in self.pathfinders:
+            self.maps[guard](observation)
+
+            location = observation.get('location')
+            direction = observation.get('direction')
+
+            action = int(self.pathfinders[guard].get_optimal_action(
+                Point(location[0], location[1]),
+                Direction(direction)
+            ))
+        else:
+            action = self.action_space(guard).sample()
+
+        super().step(action)
+
+
+    def step(self, action: ActionType):
+        while self.agent_selection != self.scout:
+            self.iter_guard(self.agent_selection)
+
+        assert self.agent_selection == self.scout
+
+        scout = self.agent_selection
+
+        if scout in self.maps:
+            observation = self.observe(scout)
+
+            self.maps[scout](observation)
+
+        super().step(action)
+
+    def agent_last(self, agent):
+        observation = self.observe(agent)
+        reward = self.rewards[agent]
+        termination = self.terminations[agent]
+        truncation = self.truncations[agent]
+        info = self.get_info(agent)
+
+        return observation, reward, termination, truncation, info
