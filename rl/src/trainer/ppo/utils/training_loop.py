@@ -42,6 +42,11 @@ def train_scout_episode(
     if seed is None:
         seed = random.randint(0, 999999)
 
+    num_guards = 0
+    for i in range(args.num_guards):
+        if random.random() < args.guards_spawnrate:
+            num_guards += 1
+    env.set_num_active_guards(num_guards)
     env.reset(seed=seed)
 
     last_scout_step_info = None  # Clear previous step
