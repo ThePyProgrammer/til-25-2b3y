@@ -513,11 +513,11 @@ def tiles_to_tensor(
         tensor = torch.rot90(tensor, k=3, dims=[1, 2])
     # direction 0 (right) - no rotation needed
 
-    import matplotlib.pyplot as plt
+    # import matplotlib.pyplot as plt
 
-    tensor[9][15][15] = 0.5
+    # tensor[5][15][15] = 0.5
 
-    plt.imshow(tensor[9])
-    plt.show()
+    # plt.imshow(tensor[5])
+    # plt.show()
 
     return tensor

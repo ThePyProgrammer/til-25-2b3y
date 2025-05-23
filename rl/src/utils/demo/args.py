@@ -4,7 +4,7 @@ import random
 
 def get_base_parser():
     """Create a base argument parser with common options for demo scripts.
-    
+
     Returns:
         ArgumentParser: Base parser with common arguments
     """
@@ -13,7 +13,7 @@ def get_base_parser():
                         help='Random seed for environment initialization')
     parser.add_argument('--guard', type=int, default=0,
                         help='Guard number (0 for first guard, 1 for second guard, etc.)')
-    parser.add_argument('--steps', type=int, default=100,
+    parser.add_argument('--steps', type=int, default=400,
                         help='Maximum number of steps to simulate')
     parser.add_argument('--human', action='store_true',
                         help='Show human view. Either --human or --record only.')
@@ -23,13 +23,13 @@ def get_base_parser():
                         help='Frames per second in output videos (only used with --record)')
     parser.add_argument('--profile', action='store_true',
                         help='Enable profiling of the code')
-    
+
     return parser
 
 
 def parse_simple_arguments():
     """Parse arguments for the simple demo script.
-    
+
     Returns:
         Namespace: Parsed arguments
     """
@@ -39,7 +39,7 @@ def parse_simple_arguments():
 
 def parse_advanced_arguments():
     """Parse arguments for the advanced demo script.
-    
+
     Returns:
         Namespace: Parsed arguments
     """

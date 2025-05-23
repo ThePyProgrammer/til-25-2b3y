@@ -1,4 +1,5 @@
 import random
+from typing import Optional, Callable
 
 import numpy as np
 
@@ -197,3 +198,63 @@ class ScoutWrapper(MapWrapper):
         done = False
         while self.agent_selection != self.scout and not done:
             done = self.iter_guard(self.agent_selection)
+
+
+class GuardWrapper(MapWrapper):
+    def __init__(
+        self,
+        env: AECEnv[AgentID, ObsType, ActionType],
+    ):
+        super().__init__(env)
+
+        self.scout_agent: Optional[Callable] = None
+
+    def iter_scout(self):
+        observation, reward, termination, truncation, info = self.agent_last(self.scout)
+
+    # def iter_guard(self, guard):
+    #     observation, reward, termination, truncation, info = self.agent_last(guard)
+
+        if termination or truncation:
+            return True
+
+        if self.scout_agent:
+            action = self.scout_agent(observation)
+        else:
+            action = self.action_space(self.scout).sample()
+
+        super().step(action)
+
+        return False
+
+    def step(self, action: ActionType):
+        done = False
+        while self.agent_selection == self.scout and not done:
+            done = self.iter_scout()
+
+        if done:
+            return
+
+        assert self.agent_selection != self.scout
+
+        super().step(action)
+
+        done = False
+        while self.agent_selection == self.scout and not done:
+            done = self.iter_scout()
+
+    def agent_last(self, agent):
+        observation = self.observations[agent]
+        reward = self.rewards[agent]
+        termination = self.terminations[agent]
+        truncation = self.truncations[agent]
+        info = self.infos[agent]
+
+        return observation, reward, termination, truncation, info
+
+    def reset(self, *args, **kwargs):
+        super().reset(*args, **kwargs)
+
+        done = False
+        while self.agent_selection == self.scout and not done:
+            done = self.iter_scout()
