@@ -1,29 +1,23 @@
 """Manages the RL model."""
-# import sys
-# import os
-# import pathlib
+
 import random
-from typing import Any, Optional
+from typing import Any
 
 import torch
-import torch.nn.functional as F
 import numpy as np
-
-# Add paths for imports
-# sys.path.append(str(pathlib.Path(os.getcwd()).parent.resolve() / "til-25-environment"))
-# sys.path.append(str(pathlib.Path(os.getcwd()).resolve()))
 
 from grid.map import Map
 from grid.utils import Point
 from grid.map import Direction
 from grid.pathfinder import Pathfinder, PathfinderConfig
 
-from networks.ppo import PPOActorCritic
+from networks.v2.utils import initialize_model
+from networks.v2.ppo import ValueNetworkConfig, DiscretePolicyConfig
+from networks.v2.encoder import MapEncoderConfig
 from agent.inference import Inference
 
 
 CHANNELS, MAP_SIZE, ACTION_DIM = 12, 31, 5
-
 
 
 def set_random_seeds(seed: int = 42):
@@ -46,18 +40,26 @@ class RLManager:
             use_top_k: Whether to use top-k sampling or deterministic selection
             seed: Random seed for reproducibility
         """
-        self.scout_policy = PPOActorCritic(
-            action_dim=ACTION_DIM,
-            map_size=MAP_SIZE,
-            channels=CHANNELS,
-            encoder_type="small",
-            shared_encoder=False,
-            embedding_dim=32,
-            actor_hidden_dims=[32, 32],
-            critic_hidden_dims=[32, 32],
-            encoder_kwargs={
-                "use_center_only": True
-            }
+        encoder_config = MapEncoderConfig(
+            kernel_sizes=[7, 3, 3, 3],
+            output_dim=32
+        )
+
+        actor_config = DiscretePolicyConfig(
+            input_dim=32,
+            action_dim=5,
+            hidden_dims=[32, 32]
+        )
+
+        critic_config = ValueNetworkConfig(
+            input_dim=32,
+            hidden_dims=[32, 32]
+        )
+
+        self.scout_policy = initialize_model(
+            encoder_config,
+            actor_config,
+            critic_config
         )
 
         checkpoint = torch.load("./models/scout.pt", map_location='cpu')
@@ -72,16 +74,16 @@ class RLManager:
                 use_viewcone = False,
             )
         )
-                
+
         self.scout = Inference(
-            self.scout_policy, 
+            self.scout_policy,
             self.recon_map,
             strategy="greedy",
             top_k=5,
             temperature=0.5,
             action_dim=ACTION_DIM
         )
-        
+
         self.initialized = False
         self.last_step = -1
 
@@ -140,11 +142,11 @@ class RLManager:
         else:
             location = observation['location']
             direction = observation['direction']
-            
+
             action = self.pathfinder.get_optimal_action(
                 Point(location[0], location[1]),
                 Direction(direction),
                 tree_index=0
             )
-            
+
             return int(action)

@@ -13,7 +13,6 @@ def _orthogonal_init(scale=1.0):
             raise ValueError("Only tensors with 2 or more dimensions are supported")
 
         nn.init.orthogonal_(tensor)
-        tensor * scale
     return _init
 
 def orthogonal_init(module):

@@ -1,7 +1,5 @@
-import os
-import sys
-import pathlib
-from typing import Any, Optional, Literal
+from typing import Any, Literal
+import random
 
 import numpy as np
 
@@ -11,7 +9,7 @@ from torch.distributions import Categorical
 from grid.map import Map
 from grid.utils import Point, Direction, Action
 from grid.node import DirectionalNode
-from networks.ppo import PPOActorCritic
+from networks.v2.ppo import PPOActorCritic
 from .utils import validate_sampling_params, top_k_sampling
 
 
@@ -39,9 +37,9 @@ class Inference:
         self.policy = policy
         self.reconstructed_map = reconstructed_map
         self.strategy = strategy
-        
+
         self.k, self.temperature = validate_sampling_params(top_k, temperature, action_dim=action_dim)
-    
+
     def _greedy_sample(
         self,
         logits: torch.Tensor,
@@ -54,8 +52,8 @@ class Inference:
 
         if best_action is None:
             return random.choice(range(5))
-        return best_action        
-    
+        return best_action
+
     def _probabilistic_sample(
         self,
         logits: torch.Tensor,
@@ -68,7 +66,7 @@ class Inference:
             action = top_k_sampling(logits, self.k, self.temperature)
             attempts += 1
         return action
-    
+
     def __call__(
         self,
         observation: dict[str, Any]
@@ -98,7 +96,7 @@ class Inference:
             embedding = self.policy.actor_encoder(map_tensor)
 
             logits = self.policy.actor(embedding).squeeze(0)
-        
+
         if self.strategy == "greedy":
             return self._greedy_sample(logits, valid_actions)
         elif self.strategy == "probabilistic":

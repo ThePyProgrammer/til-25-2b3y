@@ -1,49 +1,15 @@
 import os
 import torch
 import torch.optim as optim
-from networks.ppo import PPOActorCritic
+from networks.v2.encoder import MapEncoder, MapEncoderConfig
+from networks.v2.ppo import (
+    PPOActorCritic,
+    DiscretePolicy,
+    DiscretePolicyConfig,
+    ValueNetwork,
+    ValueNetworkConfig
+)
 
-
-def initialize_model(
-    action_dim,
-    map_size,
-    channels,
-    hidden_dims = [512, 512],
-    encoder_type="large",
-    shared_encoder=False,
-    device=None,
-    **kwargs
-):
-    """
-    Initialize the PPO model
-
-    Args:
-        action_dim: Dimension of the action space
-        map_size: Size of the map
-        channels: Number of channels in the map tensor
-        encoder_type: Type of encoder to use ("small", "medium", "large")
-        shared_encoder: Whether to use a shared encoder for actor and critic
-        device: Device to place the model on (cpu/cuda)
-
-    Returns:
-        model: Initialized PPO model
-    """
-    model = PPOActorCritic(
-        action_dim=action_dim,
-        map_size=map_size,
-        channels=channels,
-        encoder_type=encoder_type,
-        shared_encoder=shared_encoder,
-        embedding_dim=hidden_dims[0],
-        actor_hidden_dims=hidden_dims,
-        critic_hidden_dims=hidden_dims,
-        encoder_kwargs=kwargs
-    )
-
-    if device is not None:
-        model.to(device)
-
-    return model
 
 def initialize_optimizer(model, optimizer_name, learning_rate):
     """

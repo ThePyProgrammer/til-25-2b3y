@@ -13,7 +13,7 @@ sys.path.append(str(pathlib.Path(os.getcwd()).resolve()))
 from grid.map import Map
 from grid.utils import Point, Direction, Action
 from grid.node import DirectionalNode
-from networks.ppo import PPOActorCritic
+from networks.v1.ppo import PPOActorCritic
 
 # Constants for the scout model
 CHANNELS, MAP_SIZE, ACTION_DIM = 12, 31, 5

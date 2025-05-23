@@ -12,12 +12,18 @@ from til_environment.types import RewardNames
 # Import utility modules
 from trainer.ppo.utils.args import parse_args
 from trainer.ppo.utils.environment import set_seeds
-from trainer.ppo.utils.model_utils import initialize_model, initialize_optimizer, load_checkpoint, apply_model_precision
+from trainer.ppo.utils.model_utils import initialize_optimizer, load_checkpoint, apply_model_precision
 from trainer.ppo.utils.training_loop import train_scout
 from trainer.ppo.utils.buffer import ExperienceBuffer
 from trainer.ppo.utils.scheduler import create_scheduler
 
-from networks.ppo import orthogonal_init
+from networks.v2.init import orthogonal_init
+from networks.v2.encoder import MapEncoderConfig
+from networks.v2.ppo import (
+    DiscretePolicyConfig,
+    ValueNetworkConfig
+)
+from networks.v2.utils import initialize_model
 
 from utils import count_parameters
 from utils.wrapper import ScoutWrapper, CustomRewardsWrapper, CustomStateWrapper, TimeoutResetWrapper
@@ -60,16 +66,27 @@ def main(args):
     CHANNELS, MAP_SIZE, ACTION_DIM = 12, 31, 5
     print(f"Detected Map size: {MAP_SIZE}, Channels: {CHANNELS}, Action Dim: {ACTION_DIM}")
 
-    # Initialize model
-    model = initialize_model(
+    encoder_config = MapEncoderConfig(
+        kernel_sizes=[7, 3, 3, 3],
+        output_dim=32
+    )
+
+    actor_config = DiscretePolicyConfig(
+        input_dim=32,
         action_dim=ACTION_DIM,
-        map_size=MAP_SIZE,
-        channels=CHANNELS,
-        hidden_dims=[32, 32],
-        encoder_type="small",
-        shared_encoder=False,
-        device=device,
-        use_center_only=True,
+        hidden_dims=[32, 32]
+    )
+
+    critic_config = ValueNetworkConfig(
+        input_dim=32,
+        hidden_dims=[32, 32]
+    )
+
+    model = initialize_model(
+        encoder_config,
+        actor_config,
+        critic_config,
+        "cuda"
     )
 
     if args.orthogonal_init:
