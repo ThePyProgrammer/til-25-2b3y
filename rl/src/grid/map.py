@@ -132,15 +132,19 @@ class Map:
                     observed_cells.append(info)
 
                     # Skip tiles with no vision
-                    if tile.is_visible:
+                    if tile.is_visible or tile.has_scout or tile.has_guard:
                         # Check if wall information has changed
                         old_value = self.map[y, x]
                         if old_value != rotated_tile_value:
                             # Wall configuration might have changed
                             updated_cells.append(info)
 
+                        existing_walls = old_value & 0b11110000  # Extract wall bits (4-7)
+                        new_non_walls = rotated_tile_value & 0b00001111  # Extract non-wall bits (0-3)
+                        new_walls = rotated_tile_value & 0b11110000  # Extract new wall bits
+
                         # Update map with tile information
-                        self.map[y, x] = rotated_tile_value
+                        self.map[y, x] = new_non_walls | (existing_walls | new_walls)
                         self.viewed[y, x] = True
                     self.last_updated[y, x] = self.step_counter  # Record when this cell was updated
 
@@ -509,11 +513,11 @@ def tiles_to_tensor(
         tensor = torch.rot90(tensor, k=3, dims=[1, 2])
     # direction 0 (right) - no rotation needed
 
-    # import matplotlib.pyplot as plt
+    import matplotlib.pyplot as plt
 
-    # tensor[2][15][15] = 0.5
+    tensor[9][15][15] = 0.5
 
-    # plt.imshow(tensor[2])
-    # plt.show()
+    plt.imshow(tensor[9])
+    plt.show()
 
     return tensor
