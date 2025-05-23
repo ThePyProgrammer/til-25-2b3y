@@ -340,6 +340,13 @@ class Map:
             'top': ('bottom', Point(0, -1))   # If top wall here, there's a bottom wall at x,y-1
         }
 
+        wall_bit_map = {
+            'right': 4,   # bit 4
+            'bottom': 5,  # bit 5
+            'left': 6,    # bit 6
+            'top': 7      # bit 7
+        }
+
         # Update adjacent cells for walls that exist in the current cell
         for wall_dir, has_wall in walls.items():
             if has_wall and wall_dir in wall_relationships:
@@ -349,6 +356,9 @@ class Map:
 
                 # Only process if adjacent position is within grid bounds
                 if 0 <= adjacent_pos.x < self.size and 0 <= adjacent_pos.y < self.size:
+                    # Set the appropriate wall bit in the adjacent cell
+                    self.map[adjacent_pos.y, adjacent_pos.x] |= (1 << wall_bit_map[opposite_wall])
+
                     # For each direction at the adjacent cell
                     for adj_direction in Direction:
                         adj_node = self.registry.get_or_create_node(adjacent_pos, adj_direction)
