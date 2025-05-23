@@ -1,16 +1,21 @@
-from .encoder import MapEncoder, MapEncoderConfig
+from .encoder import MapEncoder, MapEncoderConfig, TemporalMapEncoder, TemporalMapEncoderConfig
 from .ppo import DiscretePolicy, DiscretePolicyConfig, ValueNetwork, ValueNetworkConfig, PPOActorCritic
 
 
 def initialize_model(
-    encoder_config: MapEncoderConfig,
+    encoder_config: MapEncoderConfig | TemporalMapEncoderConfig,
     actor_config: DiscretePolicyConfig,
     critic_config: ValueNetworkConfig,
     device=None,
     **kwargs
 ):
-    actor_encoder = MapEncoder(encoder_config)
-    critic_encoder = MapEncoder(encoder_config)
+    if isinstance(encoder_config, TemporalMapEncoderConfig):
+        actor_encoder = TemporalMapEncoder(encoder_config)
+        critic_encoder = TemporalMapEncoder(encoder_config)
+    else:
+        actor_encoder = MapEncoder(encoder_config)
+        critic_encoder = MapEncoder(encoder_config)
+
     actor = DiscretePolicy(actor_config)
     critic = ValueNetwork(critic_config)
 

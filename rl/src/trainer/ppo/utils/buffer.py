@@ -62,8 +62,8 @@ class ExperienceBuffer:
 
         # Stack collected tensors/values into batch tensors
         # Add batch dimension at dim 0
-        b_actor_inputs = torch.stack(self.actor_inputs, dim=0)
-        b_critic_inputs = torch.stack(self.critic_inputs, dim=0)
+        b_actor_inputs = torch.cat(self.actor_inputs, dim=0)
+        b_critic_inputs = torch.cat(self.critic_inputs, dim=0)
         b_actions = torch.tensor(self.actions, dtype=torch.long)
         b_log_probs = torch.tensor(self.log_probs, dtype=torch.float32)
         b_values = torch.tensor(self.values, dtype=torch.float32)

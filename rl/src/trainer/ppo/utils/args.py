@@ -11,6 +11,9 @@ def parse_args():
     parser.add_argument('--entropy_coef', type=float, default=0.01, help='PPO entropy coefficient')
     parser.add_argument('--value_loss_coef', type=float, default=0.5, help='PPO value loss coefficient')
 
+    parser.add_argument('--temporal_state', action='store_true', help='include n past states')
+    parser.add_argument('--temporal_frames', type=int, default=3, help='number of frames to use')
+
     parser.add_argument('--global_critic', action='store_true', help='give the critic access to the global state')
 
     parser.add_argument('--normalize_returns', action='store_true', help='normalize returns')

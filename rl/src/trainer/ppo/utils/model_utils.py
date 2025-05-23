@@ -1,14 +1,6 @@
 import os
 import torch
 import torch.optim as optim
-from networks.v2.encoder import MapEncoder, MapEncoderConfig
-from networks.v2.ppo import (
-    PPOActorCritic,
-    DiscretePolicy,
-    DiscretePolicyConfig,
-    ValueNetwork,
-    ValueNetworkConfig
-)
 
 
 def initialize_optimizer(model, optimizer_name, learning_rate):
@@ -82,7 +74,7 @@ def load_checkpoint(checkpoint_path, model, optimizer, scheduler=None):
         return 0, False
 
     checkpoint = torch.load(checkpoint_path)
-    model.load_state_dict(checkpoint['model_state_dict'])
+    print(model.load_state_dict(checkpoint['model_state_dict']))
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
     # Load scheduler state if it exists and a scheduler was provided

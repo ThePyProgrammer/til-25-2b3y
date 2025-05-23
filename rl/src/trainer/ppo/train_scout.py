@@ -18,7 +18,7 @@ from trainer.ppo.utils.buffer import ExperienceBuffer
 from trainer.ppo.utils.scheduler import create_scheduler
 
 from networks.v2.init import orthogonal_init
-from networks.v2.encoder import MapEncoderConfig
+from networks.v2.encoder import MapEncoderConfig, TemporalMapEncoderConfig
 from networks.v2.ppo import (
     DiscretePolicyConfig,
     ValueNetworkConfig
@@ -66,10 +66,35 @@ def main(args):
     CHANNELS, MAP_SIZE, ACTION_DIM = 12, 31, 5
     print(f"Detected Map size: {MAP_SIZE}, Channels: {CHANNELS}, Action Dim: {ACTION_DIM}")
 
-    encoder_config = MapEncoderConfig(
-        kernel_sizes=[7, 3, 3, 3],
-        output_dim=32
-    )
+    if args.temporal_state:
+        assert args.temporal_frames
+
+        encoder_config = TemporalMapEncoderConfig(
+            map_size = 16,
+            channels = 12,
+            output_dim = 32,
+            frames = 3,
+
+            conv3d_channels = [16, 24, 32],
+            conv3d_kernel_sizes = [(1, 3, 3), (1, 3, 3), (3, 3, 3)],
+            conv3d_strides = [(1, 1, 1), (1, 1, 1), (1, 1, 1)],
+            conv3d_paddings = [(0, 0, 0), (0, 0, 0), (0, 0, 0)],
+
+            conv_layers = [32, 32],
+            kernel_sizes = [3, 3],
+            strides = [1, 1],
+            paddings = [0, 0],
+
+            use_batch_norm = True,
+            dropout_rate = 0.1,
+            use_layer_norm = True,
+            use_center_only = True,
+        )
+    else:
+        encoder_config = MapEncoderConfig(
+            kernel_sizes=[7, 3, 3, 3],
+            output_dim=32
+        )
 
     actor_config = DiscretePolicyConfig(
         input_dim=32,

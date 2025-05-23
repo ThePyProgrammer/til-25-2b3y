@@ -58,6 +58,9 @@ def train_scout_episode(
 
     done = False
 
+    actor_input = torch.zeros((1, 12, args.temporal_frames, 31, 31))
+    critic_input = torch.zeros((1, 12, args.temporal_frames, 31, 31))
+
     # Inner loop for one episode
     while not done:
         # Get observation, reward, etc. for the current agent's turn
@@ -108,8 +111,13 @@ def train_scout_episode(
         direction = Direction(observation["direction"])
         env.maps[env.scout](observation)
 
-        map_input = env.maps[env.scout].get_tensor().unsqueeze(0)  # Get tensor and add batch dim
-        global_input = tiles_to_tensor(
+        map_state = env.maps[env.scout].get_tensor().unsqueeze(0)  # Get tensor and add batch dim
+
+        for i in range(args.temporal_frames - 1):
+            actor_input[:, :, i] = actor_input[:, :, i+1]
+        actor_input[:, :, args.temporal_frames-1] = map_state
+
+        global_state = tiles_to_tensor(
             map_to_tiles(env.state().transpose()),
             location,
             direction,
@@ -122,16 +130,19 @@ def train_scout_episode(
         valid_actions = set(node.children.keys())
 
         if args.global_critic:
-            critic_input = global_input
+            for i in range(args.temporal_frames - 1):
+                critic_input[:, :, i] = critic_input[:, :, i+1]
+            critic_input[:, :, args.temporal_frames-1] = global_state
+
         else:
-            critic_input = map_input
+            critic_input = actor_input
 
         # Ensure tensor dtype matches model dtype (bfloat16 if enabled)
         if args.bfloat16:
-            map_input = map_input.to(torch.bfloat16)
+            actor_input = actor_input.to(torch.bfloat16)
             critic_input = critic_input.to(torch.bfloat16)
 
-        map_input = map_input.to(device)
+        actor_input = actor_input.to(device)
         critic_input = critic_input.to(device)
 
         # Get action (A_t), log_prob, value (V(S_t)) from the model
@@ -150,11 +161,11 @@ def train_scout_episode(
         ):
             with torch.no_grad():
 
-                action, log_prob, entropy, value = model.get_action_and_value(map_input, critic_input, deterministic=False)
+                action, log_prob, entropy, value = model.get_action_and_value(actor_input, critic_input, deterministic=False)
 
             # Store info for this step to be finalized in the next scout turn
             last_scout_step_info = {
-                'actor_input': map_input,
+                'actor_input': actor_input,
                 'critic_input': critic_input,
                 'action': action.item(),
                 'log_prob': log_prob.item(),
@@ -235,6 +246,13 @@ def evaluate_scout(env, model, args, device, seed):
 
     # Run multiple evaluation episodes
     for eval_ep in range(num_episodes):
+        # Set number of guards based on spawnrate
+        num_guards = 0
+        for i in range(args.num_guards):
+            if random.random() < args.guards_spawnrate:
+                num_guards += 1
+        env.set_num_active_guards(num_guards)
+        
         # Reset environment with a varying seed
         env.reset(seed=seed + eval_ep)
 
@@ -242,6 +260,9 @@ def evaluate_scout(env, model, args, device, seed):
         episode_steps = 0
         previous_action = None
         done = False
+
+        actor_input = torch.zeros((1, 12, args.temporal_frames, 31, 31))
+        critic_input = torch.zeros((1, 12, args.temporal_frames, 31, 31))
 
         # Run one episode
         while not done:
@@ -266,8 +287,13 @@ def evaluate_scout(env, model, args, device, seed):
 
             env.maps[env.scout](observation)
 
-            map_input = env.maps[env.scout].get_tensor().unsqueeze(0)  # Get tensor and add batch dim
-            global_input = tiles_to_tensor(
+            map_state = env.maps[env.scout].get_tensor().unsqueeze(0)  # Get tensor and add batch dim
+            
+            for i in range(args.temporal_frames - 1):
+                actor_input[:, :, i] = actor_input[:, :, i+1]
+            actor_input[:, :, args.temporal_frames-1] = map_state
+
+            global_state = tiles_to_tensor(
                 map_to_tiles(env.state().transpose()),
                 location,
                 direction,
@@ -280,16 +306,18 @@ def evaluate_scout(env, model, args, device, seed):
             valid_actions = set(node.children.keys())
 
             if args.global_critic:
-                critic_input = global_input
+                for i in range(args.temporal_frames - 1):
+                    critic_input[:, :, i] = critic_input[:, :, i+1]
+                critic_input[:, :, args.temporal_frames-1] = global_state
             else:
-                critic_input = map_input
+                critic_input = actor_input
 
             # Ensure tensor dtype matches model dtype (bfloat16 if enabled)
             if args.bfloat16:
-                map_input = map_input.to(torch.bfloat16)
+                actor_input = actor_input.to(torch.bfloat16)
                 critic_input = critic_input.to(torch.bfloat16)
 
-            map_input = map_input.to(device)
+            actor_input = actor_input.to(device)
             critic_input = critic_input.to(device)
 
             # Get action from the model
@@ -306,7 +334,7 @@ def evaluate_scout(env, model, args, device, seed):
                 and args.prevent_invalid_actions
             ):
                 with torch.no_grad():
-                    action, _, _, _ = model.get_action_and_value(map_input, critic_input, deterministic=True)
+                    action, _, _, _ = model.get_action_and_value(actor_input, critic_input, deterministic=True)
 
                 action = action.item()
                 tries += 1
