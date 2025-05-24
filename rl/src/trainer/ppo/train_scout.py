@@ -13,7 +13,7 @@ from til_environment.types import RewardNames
 from trainer.ppo.utils.args import parse_args
 from trainer.ppo.utils.environment import set_seeds
 from trainer.ppo.utils.model_utils import initialize_optimizer, load_checkpoint, apply_model_precision
-from trainer.ppo.utils.training_loop import train_scout
+from trainer.ppo.utils.scout_training_loop import train_scout
 from trainer.ppo.utils.buffer import ExperienceBuffer
 from trainer.ppo.utils.scheduler import create_scheduler
 
@@ -72,23 +72,34 @@ def main(args):
         encoder_config = TemporalMapEncoderConfig(
             map_size = 16,
             channels = 12,
-            output_dim = 32,
+            output_dim = 64,
             frames = 3,
 
-            conv3d_channels = [16, 24, 32],
-            conv3d_kernel_sizes = [(1, 3, 3), (1, 3, 3), (3, 3, 3)],
-            conv3d_strides = [(1, 1, 1), (1, 1, 1), (1, 1, 1)],
-            conv3d_paddings = [(0, 0, 0), (0, 0, 0), (0, 0, 0)],
+            conv3d_channels = [32, 32, 32, 64],
+            conv3d_kernel_sizes = [(1, 7, 7), (3, 3, 3), (3, 3, 3), (3, 1, 1)],
+            conv3d_strides = [(1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1)],
+            conv3d_paddings = [(0, 0, 0), (1, 0, 0), (1, 0, 0), (0, 0, 0)],
 
-            conv_layers = [32, 32],
-            kernel_sizes = [3, 3],
-            strides = [1, 1],
-            paddings = [0, 0],
+            conv_layers = [64],
+            kernel_sizes = [3],
+            strides = [1],
+            paddings = [0],
 
             use_batch_norm = True,
             dropout_rate = 0.1,
             use_layer_norm = True,
             use_center_only = True,
+        )
+
+        actor_config = DiscretePolicyConfig(
+            input_dim=64,
+            action_dim=ACTION_DIM,
+            hidden_dims=[64, 64]
+        )
+
+        critic_config = ValueNetworkConfig(
+            input_dim=64,
+            hidden_dims=[64, 64]
         )
     else:
         encoder_config = MapEncoderConfig(
@@ -96,16 +107,16 @@ def main(args):
             output_dim=32
         )
 
-    actor_config = DiscretePolicyConfig(
-        input_dim=32,
-        action_dim=ACTION_DIM,
-        hidden_dims=[32, 32]
-    )
+        actor_config = DiscretePolicyConfig(
+            input_dim=32,
+            action_dim=ACTION_DIM,
+            hidden_dims=[32, 32]
+        )
 
-    critic_config = ValueNetworkConfig(
-        input_dim=32,
-        hidden_dims=[32, 32]
-    )
+        critic_config = ValueNetworkConfig(
+            input_dim=32,
+            hidden_dims=[32, 32]
+        )
 
     model = initialize_model(
         encoder_config,

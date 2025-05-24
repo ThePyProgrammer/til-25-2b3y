@@ -89,7 +89,8 @@ class MapEncoder(nn.Module):
         # Process spatial features
         if self.config.use_center_only:
             # Only take the center feature
-            center_idx = self.final_spatial_size // 2
+            b, c, h, w = x.shape
+            center_idx = h // 2
             x = x[:, :, center_idx, center_idx]  # Shape: [batch_size, channels]
         else:
             # Flatten all spatial features
@@ -218,9 +219,6 @@ class TemporalMapEncoder(nn.Module):
         if self.config.use_layer_norm:
             self.output_norm = nn.LayerNorm(self.config.output_dim)
 
-        # Dropout layer
-        self.dropout = nn.Dropout(self.config.dropout_rate)
-
     def forward(self, map_input):
         """
         Forward pass through the encoder.
@@ -247,14 +245,12 @@ class TemporalMapEncoder(nn.Module):
         # Process spatial features
         if self.config.use_center_only:
             # Only take the center feature
-            center_idx = self.final_spatial_size // 2
+            b, c, h, w = x.shape
+            center_idx = h // 2
             x = x[:, :, center_idx, center_idx]  # Shape: [batch_size, channels]
         else:
             # Flatten all spatial features
             x = x.reshape(x.size(0), -1)
-
-        # Apply dropout
-        x = self.dropout(x)
 
         # Final output layer
         x = self.output_layer(x)

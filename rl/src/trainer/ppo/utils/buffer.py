@@ -40,8 +40,8 @@ class ExperienceBuffer:
             done: The done signal *after* taking the action (True if episode terminated or truncated).
         """
         # Store unbatched tensors/values
-        self.actor_inputs.append(actor_input.squeeze(0) if actor_input.ndim == 4 else actor_input) # Ensure (C, H, W)
-        self.critic_inputs.append(critic_input.squeeze(0) if critic_input.ndim == 4 else critic_input) # Ensure (C, H, W)
+        self.actor_inputs.append(actor_input)
+        self.critic_inputs.append(critic_input)
         self.actions.append(action)
         self.log_probs.append(log_prob)
         self.values.append(value)
