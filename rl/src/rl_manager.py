@@ -13,7 +13,7 @@ from grid.pathfinder import Pathfinder, PathfinderConfig
 
 from networks.v2.utils import initialize_model
 from networks.v2.ppo import ValueNetworkConfig, DiscretePolicyConfig
-from networks.v2.encoder import MapEncoderConfig
+from networks.v2.encoder import MapEncoderConfig, TemporalMapEncoderConfig
 from agent.inference import Inference
 
 
@@ -40,20 +40,52 @@ class RLManager:
             use_top_k: Whether to use top-k sampling or deterministic selection
             seed: Random seed for reproducibility
         """
-        encoder_config = MapEncoderConfig(
-            kernel_sizes=[7, 3, 3, 3],
-            output_dim=32
+        # encoder_config = MapEncoderConfig(
+        #     kernel_sizes=[7, 3, 3, 3],
+        #     output_dim=32
+        # )
+
+        # actor_config = DiscretePolicyConfig(
+        #     input_dim=32,
+        #     action_dim=5,
+        #     hidden_dims=[32, 32]
+        # )
+
+        # critic_config = ValueNetworkConfig(
+        #     input_dim=32,
+        #     hidden_dims=[32, 32]
+        # )
+
+        encoder_config = TemporalMapEncoderConfig(
+            map_size = 16,
+            channels = 12,
+            output_dim = 64,
+
+            conv3d_channels = [32, 48, 48, 64],
+            conv3d_kernel_sizes = [(3, 7, 7), (3, 3, 3), (3, 3, 3), (4, 1, 1)],
+            conv3d_strides = [(1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1)],
+            conv3d_paddings = [(1, 0, 0), (1, 0, 0), (1, 0, 0), (0, 0, 0)],
+
+            conv_layers = [64],
+            kernel_sizes = [3],
+            strides = [1],
+            paddings = [0],
+
+            use_batch_norm = True,
+            dropout_rate = 0.1,
+            use_layer_norm = True,
+            use_center_only = True,
         )
 
         actor_config = DiscretePolicyConfig(
-            input_dim=32,
-            action_dim=5,
-            hidden_dims=[32, 32]
+            input_dim=64,
+            action_dim=ACTION_DIM,
+            hidden_dims=[64, 64]
         )
 
         critic_config = ValueNetworkConfig(
-            input_dim=32,
-            hidden_dims=[32, 32]
+            input_dim=64,
+            hidden_dims=[64, 64]
         )
 
         self.scout_policy = initialize_model(
@@ -79,6 +111,7 @@ class RLManager:
             self.scout_policy,
             self.recon_map,
             strategy="greedy",
+            n_frames=4,
             top_k=5,
             temperature=0.5,
             action_dim=ACTION_DIM

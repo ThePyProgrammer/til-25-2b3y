@@ -1,4 +1,4 @@
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 import random
 
 import numpy as np
@@ -30,6 +30,7 @@ class Inference:
         policy: PPOActorCritic,
         reconstructed_map: Map,
         strategy: Literal["greedy", "probabilistic"],
+        n_frames: Optional[int],
         top_k: int = 5,
         temperature: float = 1.0,
         action_dim: int = 5
@@ -37,6 +38,7 @@ class Inference:
         self.policy = policy
         self.reconstructed_map = reconstructed_map
         self.strategy = strategy
+        self.n_frames = n_frames
 
         self.k, self.temperature = validate_sampling_params(top_k, temperature, action_dim=action_dim)
 
@@ -92,7 +94,7 @@ class Inference:
         valid_actions = set(node.children.keys())
 
         with torch.no_grad():
-            map_tensor = self.reconstructed_map.get_tensor().unsqueeze(0)
+            map_tensor = self.reconstructed_map.get_tensor(self.n_frames).unsqueeze(0)
             embedding = self.policy.actor_encoder(map_tensor)
 
             logits = self.policy.actor(embedding).squeeze(0)
