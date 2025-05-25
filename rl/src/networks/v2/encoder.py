@@ -109,7 +109,6 @@ class TemporalMapEncoderConfig:
     map_size: int = 16
     channels: int = 12
     output_dim: int = 32
-    frames: int = 3
 
     # Spatial-only 3D convolution parameters (preserving temporal dimension)
     conv3d_channels: list[int] = field(default_factory=lambda: [32, 32, 32])

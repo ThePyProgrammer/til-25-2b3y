@@ -55,6 +55,9 @@ class Map:
         self.registry = NodeRegistry(self.size)
         self._populate_nodes()
 
+        self.maps: list[NDArray] = []
+        self.time_since_updates: list[NDArray] = []
+
         self.trees: list[TrajectoryTree] = []
 
     def _populate_nodes(self):
@@ -156,6 +159,9 @@ class Map:
             # tree.prune(observed_cells, before_step=True)
             tree.step()
             tree.prune(observed_cells)
+
+        self.maps.append(self.map)
+        self.time_since_updates.append(self.time_since_update)
 
         return self.map
 
@@ -397,7 +403,7 @@ class Map:
 
         return tree
 
-    def get_tensor(self) -> torch.Tensor:
+    def get_tensor(self, frames: Optional[int] = None) -> torch.Tensor:
         """
         Returns a tensor representation of the map with multiple channels.
         The map is rotated so the agent is always facing right (direction 0).
@@ -422,14 +428,31 @@ class Map:
                 - Channel 11: step (0-1) normalised from 0-100 to 0-1
         """
 
-        return tiles_to_tensor(
-            self.get_tiles(),
-            self.agent_loc,
-            self.direction,
-            self.size,
-            self.time_since_update,
-            self.step_counter
-        )
+        if frames is None:
+            return tiles_to_tensor(
+                self.get_tiles(),
+                self.agent_loc,
+                self.direction,
+                self.size,
+                self.time_since_update,
+                self.step_counter
+            )
+        else:
+            output = torch.zeros((12, frames, 31, 31))
+
+            for i, map in enumerate(self.maps[::-1][:frames]):
+                tens = tiles_to_tensor(
+                    map_to_tiles(map),
+                    self.agent_loc,
+                    self.direction,
+                    self.size,
+                    self.time_since_updates[-i-1],
+                    self.step_counter - i
+                )
+
+                output[:, -i-1] = tens
+
+            return output
 
 def map_to_tiles(map: NDArray):
     return [[Tile(map[y, x]) for y in range(16)] for x in range(16)]

@@ -58,9 +58,7 @@ def train_scout_episode(
 
     done = False
 
-    if args.temporal_state:
-        actor_input = torch.zeros((1, 12, args.temporal_frames, 31, 31))
-        critic_input = torch.zeros((1, 12, args.temporal_frames, 31, 31))
+    global_maps = []
 
     # Inner loop for one episode
     while not done:
@@ -112,36 +110,48 @@ def train_scout_episode(
         direction = Direction(observation["direction"])
         env.maps[env.scout](observation)
 
-        map_state = env.maps[env.scout].get_tensor().unsqueeze(0)  # Get tensor and add batch dim
+        if args.temporal_state:
+            map_state = env.maps[env.scout].get_tensor(args.temporal_frames).unsqueeze(0)
+        else:
+            map_state = env.maps[env.scout].get_tensor(args.temporal_frames).unsqueeze(0)
+
+        global_maps.append(env.state().transpose())
 
         if args.temporal_state:
-            for i in range(args.temporal_frames - 1):
-                actor_input[:, :, i] = actor_input[:, :, i+1]
-            actor_input[:, :, args.temporal_frames-1] = map_state
-        else:
-            actor_input = map_state
+            output = torch.zeros((12, args.temporal_frames, 31, 31))
 
-        global_state = tiles_to_tensor(
-            map_to_tiles(env.state().transpose()),
-            location,
-            direction,
-            16,
-            np.zeros((16, 16)),
-            env.maps[env.scout].step_counter
-        ).unsqueeze(0)
+            for i, map in enumerate(global_maps[:args.temporal_frames]):
+                tens = tiles_to_tensor(
+                    map_to_tiles(map),
+                    location,
+                    direction,
+                    16,
+                    np.zeros((16, 16)),
+                    env.maps[env.scout].step_counter - i
+                )
+
+                output[:, -i-1] = tens
+
+            global_state = output.unsqueeze(0)
+        else:
+            global_state = tiles_to_tensor(
+                map_to_tiles(env.state().transpose()),
+                location,
+                direction,
+                16,
+                np.zeros((16, 16)),
+                env.maps[env.scout].step_counter
+            ).unsqueeze(0)
 
         node: DirectionalNode = env.maps[env.scout].get_node(position, direction)
         valid_actions = set(node.children.keys())
 
+        actor_input = map_state
+
         if args.global_critic:
-            if args.temporal_state:
-                for i in range(args.temporal_frames - 1):
-                    critic_input[:, :, i] = critic_input[:, :, i+1]
-                critic_input[:, :, args.temporal_frames-1] = global_state
-            else:
-                critic_input = global_state
+            critic_input = global_state
         else:
-            critic_input = actor_input
+            critic_input = map_state
 
         # Ensure tensor dtype matches model dtype (bfloat16 if enabled)
         if args.bfloat16:
@@ -251,12 +261,16 @@ def evaluate_scout(env, model, args, device, seed):
     total_steps = 0
     num_episodes = 32
 
+    # Track individual episode statistics for detailed analysis
+    episode_rewards = []
+    episode_lengths = []
+
     # Collect reward metrics by type
     rewards_by_type = {reward_type: 0.0 for reward_type in RewardNames}
 
     # Run multiple evaluation episodes
     for eval_ep in range(num_episodes):
-        # Set number of guards based on spawnrate
+        # Set number of guards based on spawnrate (align with training)
         num_guards = 0
         for i in range(args.num_guards):
             if random.random() < args.guards_spawnrate:
@@ -271,9 +285,7 @@ def evaluate_scout(env, model, args, device, seed):
         previous_action = None
         done = False
 
-        if args.temporal_state:
-            actor_input = torch.zeros((1, 12, args.temporal_frames, 31, 31))
-            critic_input = torch.zeros((1, 12, args.temporal_frames, 31, 31))
+        global_maps = []  # Track global maps like in training
 
         # Run one episode
         while not done:
@@ -290,11 +302,13 @@ def evaluate_scout(env, model, args, device, seed):
                         if reward_type in rewards_by_type:
                             rewards_by_type[reward_type] += value
 
+            # Update episode reward
+            episode_reward += reward
+
             # Check if the current agent is done
             if done:
-                episode_reward += reward
+                break  # End episode
             else:
-                episode_reward += reward
                 episode_steps += 1
 
             location = observation["location"]
@@ -303,36 +317,50 @@ def evaluate_scout(env, model, args, device, seed):
 
             env.maps[env.scout](observation)
 
-            map_state = env.maps[env.scout].get_tensor().unsqueeze(0)  # Get tensor and add batch dim
-
+            # Get map state (align with training logic)
             if args.temporal_state:
-                for i in range(args.temporal_frames - 1):
-                    actor_input[:, :, i] = actor_input[:, :, i+1]
-                actor_input[:, :, args.temporal_frames-1] = map_state
+                map_state = env.maps[env.scout].get_tensor(args.temporal_frames).unsqueeze(0)
             else:
-                actor_input = map_state
+                map_state = env.maps[env.scout].get_tensor(args.temporal_frames).unsqueeze(0)
 
-            global_state = tiles_to_tensor(
-                map_to_tiles(env.state().transpose()),
-                location,
-                direction,
-                16,
-                np.zeros((16, 16)),
-                env.maps[env.scout].step_counter
-            ).unsqueeze(0)
+            global_maps.append(env.state().transpose())
+
+            # Generate global state (align with training logic)
+            if args.temporal_state:
+                output = torch.zeros((12, args.temporal_frames, 31, 31))
+
+                for i, map in enumerate(global_maps[:args.temporal_frames]):
+                    tens = tiles_to_tensor(
+                        map_to_tiles(map),
+                        location,
+                        direction,
+                        16,
+                        np.zeros((16, 16)),
+                        env.maps[env.scout].step_counter - i
+                    )
+
+                    output[:, -i-1] = tens
+
+                global_state = output.unsqueeze(0)
+            else:
+                global_state = tiles_to_tensor(
+                    map_to_tiles(env.state().transpose()),
+                    location,
+                    direction,
+                    16,
+                    np.zeros((16, 16)),
+                    env.maps[env.scout].step_counter
+                ).unsqueeze(0)
 
             node: DirectionalNode = env.maps[env.scout].get_node(position, direction)
             valid_actions = set(node.children.keys())
 
+            actor_input = map_state
+
             if args.global_critic:
-                if args.temporal_state:
-                    for i in range(args.temporal_frames - 1):
-                        critic_input[:, :, i] = critic_input[:, :, i+1]
-                    critic_input[:, :, args.temporal_frames-1] = global_state
-                else:
-                    critic_input = global_state
+                critic_input = global_state
             else:
-                critic_input = actor_input
+                critic_input = map_state
 
             # Ensure tensor dtype matches model dtype (bfloat16 if enabled)
             if args.bfloat16:
@@ -367,7 +395,9 @@ def evaluate_scout(env, model, args, device, seed):
             previous_action = action
             env.step(action)
 
-        # Track episode statistics
+        # Track individual episode statistics
+        episode_rewards.append(episode_reward)
+        episode_lengths.append(episode_steps)
         total_rewards += episode_reward
         total_steps += episode_steps
         print(f"  Episode {eval_ep+1}: Reward = {episode_reward:.2f}, Steps = {episode_steps}")
@@ -375,16 +405,45 @@ def evaluate_scout(env, model, args, device, seed):
     # Set model back to training mode
     model.train()
 
-    # Calculate average metrics
+    # Calculate comprehensive statistics
     avg_reward = total_rewards / num_episodes
     avg_steps = total_steps / num_episodes
+    
+    # Convert to numpy arrays for statistical calculations
+    rewards_array = np.array(episode_rewards)
+    lengths_array = np.array(episode_lengths)
+    
+    # Calculate detailed statistics
+    reward_stats = {
+        "mean": float(np.mean(rewards_array)),
+        "median": float(np.median(rewards_array)),
+        "std": float(np.std(rewards_array)),
+        "min": float(np.min(rewards_array)),
+        "max": float(np.max(rewards_array)),
+        "q25": float(np.percentile(rewards_array, 25)),
+        "q75": float(np.percentile(rewards_array, 75))
+    }
+    
+    length_stats = {
+        "mean": float(np.mean(lengths_array)),
+        "median": float(np.median(lengths_array)),
+        "std": float(np.std(lengths_array)),
+        "min": float(np.min(lengths_array)),
+        "max": float(np.max(lengths_array)),
+        "q25": float(np.percentile(lengths_array, 25)),
+        "q75": float(np.percentile(lengths_array, 75))
+    }
 
     # Calculate average rewards by type
     avg_rewards_by_type = {k: v / num_episodes for k, v in rewards_by_type.items()}
 
     print("Evaluation results:")
-    print(f"  Average reward: {avg_reward:.2f}")
-    print(f"  Average episode steps: {avg_steps:.2f}")
+    print(f"  Episode Rewards - Mean: {reward_stats['mean']:.2f}, Median: {reward_stats['median']:.2f}, Std: {reward_stats['std']:.2f}")
+    print(f"                    Min: {reward_stats['min']:.2f}, Max: {reward_stats['max']:.2f}")
+    print(f"                    Q25: {reward_stats['q25']:.2f}, Q75: {reward_stats['q75']:.2f}")
+    print(f"  Episode Length  - Mean: {length_stats['mean']:.1f}, Median: {length_stats['median']:.1f}, Std: {length_stats['std']:.1f}")
+    print(f"                    Min: {length_stats['min']:.0f}, Max: {length_stats['max']:.0f}")
+    print(f"                    Q25: {length_stats['q25']:.1f}, Q75: {length_stats['q75']:.1f}")
 
     # Print reward breakdown if available
     if any(avg_rewards_by_type.values()):
@@ -398,8 +457,11 @@ def evaluate_scout(env, model, args, device, seed):
         "avg_episode_length": avg_steps,
         "total_rewards": total_rewards,
         "total_steps": total_steps,
-        "rewards_by_type": avg_rewards_by_type,
-        "success_rate": success_rate
+        "reward_stats": reward_stats,
+        "length_stats": length_stats,
+        "episode_rewards": episode_rewards,
+        "episode_lengths": episode_lengths,
+        "rewards_by_type": avg_rewards_by_type
     }
 
 def train_scout(env, model, optimizer, scheduler, buffer, args):

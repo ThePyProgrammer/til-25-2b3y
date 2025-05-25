@@ -73,12 +73,11 @@ def main(args):
             map_size = 16,
             channels = 12,
             output_dim = 64,
-            frames = 3,
 
-            conv3d_channels = [32, 32, 32, 64],
-            conv3d_kernel_sizes = [(1, 7, 7), (3, 3, 3), (3, 3, 3), (3, 1, 1)],
+            conv3d_channels = [32, 48, 48, 64],
+            conv3d_kernel_sizes = [(3, 7, 7), (3, 3, 3), (3, 3, 3), (4, 1, 1)],
             conv3d_strides = [(1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1)],
-            conv3d_paddings = [(0, 0, 0), (1, 0, 0), (1, 0, 0), (0, 0, 0)],
+            conv3d_paddings = [(1, 0, 0), (1, 0, 0), (1, 0, 0), (0, 0, 0)],
 
             conv_layers = [64],
             kernel_sizes = [3],
