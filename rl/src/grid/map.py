@@ -55,6 +55,7 @@ class Map:
         self.registry = NodeRegistry(self.size)
         self._populate_nodes()
 
+        self.tiles: list[list[list[Tile]]] = []
         self.maps: list[NDArray] = []
         self.time_since_updates: list[NDArray] = []
 
@@ -160,6 +161,7 @@ class Map:
             tree.step()
             tree.prune(observed_cells)
 
+        self.get_tiles()
         self.maps.append(self.map)
         self.time_since_updates.append(self.time_since_update)
 
@@ -194,7 +196,9 @@ class Map:
         Returns:
             np.ndarray: Array of shape (size, size) containing tile type information.
         """
-        return map_to_tiles(self.map)
+        if len(self.tiles) != self.step_counter:
+            self.tiles.append(map_to_tiles(self.map))
+        return self.tiles[-1]
 
     def get_tile_type(self):
         """
@@ -427,7 +431,6 @@ class Map:
                 - Channel 10: time_since_updated (0-1)
                 - Channel 11: step (0-1) normalised from 0-100 to 0-1
         """
-
         if frames is None:
             return tiles_to_tensor(
                 self.get_tiles(),
@@ -442,7 +445,7 @@ class Map:
 
             for i, map in enumerate(self.maps[::-1][:frames]):
                 tens = tiles_to_tensor(
-                    map_to_tiles(map),
+                    self.tiles[-i-1],
                     self.agent_loc,
                     self.direction,
                     self.size,
@@ -480,52 +483,123 @@ def tiles_to_tensor(
     tensor_size = 16 * 2 - 1
     center = tensor_size // 2  # Center position is 15 for a 31x31 tensor
 
-    # Initialize tensor with zeros (12 channels)
-    tensor = torch.zeros((12, tensor_size, tensor_size), dtype=torch.float32)
+    # old slower method:
+    # # Initialize tensor with zeros (12 channels)
+    # tensor = torch.zeros((12, tensor_size, tensor_size), dtype=torch.float32)
 
-    for y in range(size):
-        for x in range(size):
-            tile = tiles[x][y]
+    # for y in range(size):
+    #     for x in range(size):
+    #         tile = tiles[x][y]
 
-            new_x, new_y = to_centered_coords(x, y, location, center)
+    #         new_x, new_y = to_centered_coords(x, y, location, center)
 
-            # Channels 0-3: no_vision, empty, recon, mission tiles
-            if tile.is_visible:
-                tensor[0, new_y, new_x] = 1.0
+    #         # Channels 0-3: no_vision, empty, recon, mission tiles
+    #         if tile.is_visible:
+    #             tensor[0, new_y, new_x] = 1.0
 
-            if tile.is_empty:
-                tensor[1, new_y, new_x] = 1.0
-            elif tile.is_recon:
-                tensor[2, new_y, new_x] = 1.0
-            elif tile.is_mission:
-                tensor[3, new_y, new_x] = 1.0
+    #         if tile.is_empty:
+    #             tensor[1, new_y, new_x] = 1.0
+    #         elif tile.is_recon:
+    #             tensor[2, new_y, new_x] = 1.0
+    #         elif tile.is_mission:
+    #             tensor[3, new_y, new_x] = 1.0
 
-            # Channels 4-5: scout and guard
-            if tile.has_scout:
-                tensor[4, new_y, new_x] = 1.0
-            elif tile.has_guard:
-                tensor[5, new_y, new_x] = 1.0
+    #         # Channels 4-5: scout and guard
+    #         if tile.has_scout:
+    #             tensor[4, new_y, new_x] = 1.0
+    #         elif tile.has_guard:
+    #             tensor[5, new_y, new_x] = 1.0
 
-            # Channel 6-9: walls (top, bottom, left, right)
-            top_bit = 1 if tile.has_top_wall else 0
-            right_bit = 1 if tile.has_right_wall else 0
-            bottom_bit = 1 if tile.has_bottom_wall else 0
-            left_bit = 1 if tile.has_left_wall else 0
+    #         # Channel 6-9: walls (top, bottom, left, right)
+    #         top_bit = 1 if tile.has_top_wall else 0
+    #         right_bit = 1 if tile.has_right_wall else 0
+    #         bottom_bit = 1 if tile.has_bottom_wall else 0
+    #         left_bit = 1 if tile.has_left_wall else 0
 
-            for turn in range(direction):
-                left_bit, bottom_bit, right_bit, top_bit = top_bit, left_bit, bottom_bit, right_bit
+    #         tensor[6, new_y, new_x] = top_bit
+    #         tensor[7, new_y, new_x] = bottom_bit
+    #         tensor[8, new_y, new_x] = left_bit
+    #         tensor[9, new_y, new_x] = right_bit
 
-            tensor[6, new_y, new_x] = top_bit
-            tensor[7, new_y, new_x] = bottom_bit
-            tensor[8, new_y, new_x] = left_bit
-            tensor[9, new_y, new_x] = right_bit
+    #         # Channel 10: last_updated (recently updated cells)
+    #         tensor[10, new_y, new_x] = time_since_update[y, x] / 100.0
 
-            # Channel 10: last_updated (recently updated cells)
-            tensor[10, new_y, new_x] = time_since_update[y, x] / 100.0
+    # # Channel 11: step
+    # normalized_step = step_num / 100.0
+    # tensor[11].fill_(normalized_step)
 
-    # Channel 11: step
-    normalized_step = step_num / 100.0
-    tensor[11].fill_(normalized_step)
+    # Extract tile attributes using list comprehensions for better performance
+    # Flatten tiles and extract attributes in batch
+    flat_tiles = [tiles[x][y] for y in range(size) for x in range(size)]
+
+    # Extract all attributes at once using numpy array creation
+    is_visible = np.array([tile.is_visible for tile in flat_tiles], dtype=bool).reshape(size, size)
+    is_empty = np.array([tile.is_empty for tile in flat_tiles], dtype=bool).reshape(size, size)
+    is_recon = np.array([tile.is_recon for tile in flat_tiles], dtype=bool).reshape(size, size)
+    is_mission = np.array([tile.is_mission for tile in flat_tiles], dtype=bool).reshape(size, size)
+    has_scout = np.array([tile.has_scout for tile in flat_tiles], dtype=bool).reshape(size, size)
+    has_guard = np.array([tile.has_guard for tile in flat_tiles], dtype=bool).reshape(size, size)
+    has_top_wall = np.array([tile.has_top_wall for tile in flat_tiles], dtype=bool).reshape(size, size)
+    has_bottom_wall = np.array([tile.has_bottom_wall for tile in flat_tiles], dtype=bool).reshape(size, size)
+    has_left_wall = np.array([tile.has_left_wall for tile in flat_tiles], dtype=bool).reshape(size, size)
+    has_right_wall = np.array([tile.has_right_wall for tile in flat_tiles], dtype=bool).reshape(size, size)
+
+    # Create coordinate grids
+    y_grid, x_grid = np.mgrid[0:size, 0:size]
+
+    # Vectorized coordinate transformation
+    if isinstance(location, tuple):
+        if len(location) >= 2:
+            loc_x, loc_y = location[0], location[1]
+        else:
+            raise ValueError(f"Location tuple must have at least 2 elements, got {len(location)}")
+    else:
+        # Assume it's an array-like object
+        loc_x, loc_y = int(location[0]), int(location[1])
+
+    new_x = x_grid - loc_x + center
+    new_y = y_grid - loc_y + center
+
+    # Create mask for valid coordinates
+    valid_mask = (new_x >= 0) & (new_x < tensor_size) & (new_y >= 0) & (new_y < tensor_size)
+
+    # Initialize tensor with zeros (12 channels) using numpy for speed
+    tensor_np = np.zeros((12, tensor_size, tensor_size), dtype=np.float32)
+
+    # Use advanced indexing to set values where valid
+    valid_y = new_y[valid_mask]
+    valid_x = new_x[valid_mask]
+
+    # Stack all boolean arrays for efficient conversion
+    bool_channels = np.stack([
+        is_visible[valid_mask],
+        is_empty[valid_mask],
+        is_recon[valid_mask],
+        is_mission[valid_mask],
+        has_scout[valid_mask],
+        has_guard[valid_mask],
+        has_top_wall[valid_mask],
+        has_bottom_wall[valid_mask],
+        has_left_wall[valid_mask],
+        has_right_wall[valid_mask]
+    ], axis=0).astype(np.float32)
+
+    # Set all boolean channels at once
+    tensor_np[0:10, valid_y, valid_x] = bool_channels
+
+    # Channel 10: time since update
+    tensor_np[10, valid_y, valid_x] = (time_since_update[valid_mask] / 100.0).astype(np.float32)
+
+    # Channel 11: step (fill entire channel)
+    tensor_np[11, :, :] = step_num / 100.0
+
+    # Convert to torch tensor
+    tensor = torch.from_numpy(tensor_np)
+
+
+    for turn in range(direction):
+        # left_bit, bottom_bit, right_bit, top_bit = top_bit, left_bit, bottom_bit, right_bit
+        tensor[8], tensor[7], tensor[9], tensor[6] = tensor[6], tensor[8], tensor[7], tensor[9]
 
     # Rotate the entire tensor based on the agent's direction
     if direction == 1:  # down - rotate 90° counter-clockwise
@@ -535,12 +609,5 @@ def tiles_to_tensor(
     elif direction == 3:  # up - rotate 90° clockwise
         tensor = torch.rot90(tensor, k=3, dims=[1, 2])
     # direction 0 (right) - no rotation needed
-
-    # import matplotlib.pyplot as plt
-
-    # tensor[5][15][15] = 0.5
-
-    # plt.imshow(tensor[5])
-    # plt.show()
 
     return tensor
