@@ -408,11 +408,11 @@ def evaluate_scout(env, model, args, device, seed):
     # Calculate comprehensive statistics
     avg_reward = total_rewards / num_episodes
     avg_steps = total_steps / num_episodes
-    
+
     # Convert to numpy arrays for statistical calculations
     rewards_array = np.array(episode_rewards)
     lengths_array = np.array(episode_lengths)
-    
+
     # Calculate detailed statistics
     reward_stats = {
         "mean": float(np.mean(rewards_array)),
@@ -423,7 +423,7 @@ def evaluate_scout(env, model, args, device, seed):
         "q25": float(np.percentile(rewards_array, 25)),
         "q75": float(np.percentile(rewards_array, 75))
     }
-    
+
     length_stats = {
         "mean": float(np.mean(lengths_array)),
         "median": float(np.median(lengths_array)),

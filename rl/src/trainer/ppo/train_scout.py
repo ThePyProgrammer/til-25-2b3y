@@ -36,7 +36,7 @@ REWARDS_DICT = {
     RewardNames.SCOUT_CAPTURED: -10,
     RewardNames.SCOUT_RECON: 0.2,
     RewardNames.SCOUT_MISSION: 1,
-    # RewardNames.WALL_COLLISION: -0.4,
+    # RewardNames.WALL_COLLISION: -0.2,
     # RewardNames.SCOUT_TRUNCATION: 2.5,
     # RewardNames.STATIONARY_PENALTY: -0.2,
     # RewardNames.SCOUT_STEP: 0.2
@@ -63,7 +63,7 @@ def main(args):
     env.reset(seed=args.seed)
 
     # Extract observation shape information
-    CHANNELS, MAP_SIZE, ACTION_DIM = 12, 31, 5
+    CHANNELS, MAP_SIZE, ACTION_DIM = 12, 31, 4
     print(f"Detected Map size: {MAP_SIZE}, Channels: {CHANNELS}, Action Dim: {ACTION_DIM}")
 
     if args.temporal_state:
@@ -72,14 +72,14 @@ def main(args):
         encoder_config = TemporalMapEncoderConfig(
             map_size = 16,
             channels = 12,
-            output_dim = 64,
+            output_dim = 48,
 
-            conv3d_channels = [32, 48, 48, 64],
-            conv3d_kernel_sizes = [(3, 7, 7), (3, 3, 3), (3, 3, 3), (4, 1, 1)],
-            conv3d_strides = [(1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1)],
-            conv3d_paddings = [(1, 0, 0), (1, 0, 0), (1, 0, 0), (0, 0, 0)],
+            conv3d_channels = [16, 16, 24, 24, 32, 32, 32, 48, 48],
+            conv3d_kernel_sizes = [(3, 3, 3), (3, 3, 3), (3, 3, 3), (3, 3, 3), (3, 3, 3), (3, 3, 3), (3, 3, 3), (3, 3, 3), (3, 3, 3)],
+            conv3d_strides = [(1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1)],
+            conv3d_paddings = [(1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (0, 0, 0)],
 
-            conv_layers = [64],
+            conv_layers = [48],
             kernel_sizes = [3],
             strides = [1],
             paddings = [0],
@@ -91,14 +91,14 @@ def main(args):
         )
 
         actor_config = DiscretePolicyConfig(
-            input_dim=64,
+            input_dim=48,
             action_dim=ACTION_DIM,
-            hidden_dims=[64, 64]
+            hidden_dims=[48, 48, 48, 48]
         )
 
         critic_config = ValueNetworkConfig(
-            input_dim=64,
-            hidden_dims=[64, 64]
+            input_dim=48,
+            hidden_dims=[48, 48, 48, 48]
         )
     else:
         encoder_config = MapEncoderConfig(

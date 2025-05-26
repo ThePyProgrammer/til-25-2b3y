@@ -12,7 +12,7 @@ def parse_args():
     parser.add_argument('--value_loss_coef', type=float, default=0.5, help='PPO value loss coefficient')
 
     parser.add_argument('--temporal_state', action='store_true', help='include n past states')
-    parser.add_argument('--temporal_frames', type=int, default=4, help='number of frames to use')
+    parser.add_argument('--temporal_frames', type=int, default=3, help='number of frames to use')
 
     parser.add_argument('--global_critic', action='store_true', help='give the critic access to the global state')
 
