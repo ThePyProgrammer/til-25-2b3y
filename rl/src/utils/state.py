@@ -1,67 +1,123 @@
-from typing import Any
+from typing import Optional
 
 import numpy as np
+from numpy.typing import NDArray
+
 import torch
+from tensordict.tensordict import TensorDict
 
-def encode_viewcone(viewcone: np.ndarray) -> torch.Tensor:
+
+def unpack_bits(arr: NDArray[np.uint8]) -> NDArray[np.uint8]:
     """
-    Encodes the viewcone into multiple channels suitable for CNN processing.
-
-    Returns:
-        A multi-channel tensor with shape [channels, height, width]
-    """
-    height, width = viewcone.shape
-
-    # Create 10 binary channels (one-hot for point types + players + 4 wall directions)
-    encoded = torch.zeros((10, height, width), dtype=torch.float)
-
-    # Process each tile
-    for y in range(height):
-        for x in range(width):
-            tile = viewcone[y, x].item()
-            encoded[:, y, x] = encode_tile(tile)
-
-    return encoded
-
-def encode_tile(tile: int) -> torch.Tensor:
-    channel = torch.zeros(10, dtype=torch.float)
-    # Channel 0: Visibility mask (0 = not visible, 1 = visible)
-    channel[0] = 0.0 if (tile & 0x3) == 0 else 1.0
-
-    # Channels 1-3: Point type (one-hot encoding)
-    point_type = tile & 0x3  # Extract bits 0-1
-    if point_type > 0:  # Only encode if the tile is visible
-        channel[point_type] = 1.0
-
-    # Channel 4: Scout presence
-    channel[4] = 1.0 if (tile >> 2) & 1 else 0.0
-
-    # Channel 5: Guard presence
-    channel[5] = 1.0 if (tile >> 3) & 1 else 0.0
-
-    # Channels 6-9: Wall directions (binary encoding)
-    channel[6] = 1.0 if (tile >> 4) & 1 else 0.0  # Right wall
-    channel[7] = 1.0 if (tile >> 5) & 1 else 0.0  # Bottom wall
-    channel[8] = 1.0 if (tile >> 6) & 1 else 0.0  # Left wall
-    channel[9] = 1.0 if (tile >> 7) & 1 else 0.0  # Top wall
-
-    return channel
-
-def encode_observation(observation: dict[str, Any]):
-    """
-    Encodes a single observation into tensor format ready for neural network processing.
+    channel definition:
+        0: top wall
+        1: left wall
+        2: bottom wall
+        3: right wall
+        4: guard
+        5: scout
+        6: no vision
+        7: is empty
+        8: recon point
+        9: mission point
 
     Args:
-        observation: A dictionary containing 'viewcone', 'direction', and 'location'
-
-    Returns:
-        A tuple of (spatial_tensor, static_tensor) ready for neural network processing
+        arr (NDArray[np.uint8]): array of shape [height, width]
+    Output:
+        (NDArray[np.uint8]): array of shape [10, height, width]
     """
-    # Encode the viewcone (spatial data)
-    x_spatial = encode_viewcone(observation['viewcone'])
+    unpacked = np.unpackbits(np.expand_dims(arr, 0), axis=0)
+    tile_content = np.eye(4, dtype=np.uint8)[unpacked[-2] * 2 + unpacked[-1]].transpose((-1, 0, 1)) # one hot encode last 2 bits
+    arr = np.concatenate((unpacked[:-2], tile_content)) # replace last 2 bits with their meanings
 
-    # Encode the static data (direction and location)
-    static = [observation['direction']] + list(observation['location'])
-    x_static = torch.tensor(static, dtype=torch.float)
+    return arr
 
-    return x_spatial, x_static
+def prepare_viewcone(
+    viewcone: NDArray[np.uint8],
+    direction: int,
+    remove_self_agent: bool = True,
+) -> NDArray[np.uint8]:
+    rectified_viewcone = np.zeros((9, 9), dtype=np.uint8)
+    rectified_viewcone[2:, 2:7] = viewcone
+
+    rectified_viewcone = unpack_bits(rectified_viewcone)
+
+    if remove_self_agent:
+        rectified_viewcone[4][4, 4] = 0 # guard
+        rectified_viewcone[5][4, 4] = 0 # scout
+
+    for turn in range(direction):
+        # left_bit, bottom_bit, right_bit, top_bit = top_bit, left_bit, bottom_bit, right_bit
+        _top = rectified_viewcone[0]
+        _left = rectified_viewcone[1]
+        _bottom = rectified_viewcone[2]
+        _right = rectified_viewcone[3]
+        (
+            rectified_viewcone[1],
+            rectified_viewcone[2],
+            rectified_viewcone[3],
+            rectified_viewcone[0]
+        ) = (
+            _top,
+            _left,
+            _bottom,
+            _right
+        )
+
+    rectified_viewcone = np.rot90(rectified_viewcone, k=direction, axes=(1, 2))
+
+    return rectified_viewcone
+
+def prepare_map(
+    map: NDArray[np.uint8]
+) -> NDArray[np.uint8]:
+
+    map = unpack_bits(map)
+
+    return map
+
+class StateManager:
+    def __init__(self, n_frames: Optional[int] = None):
+        self.n_frames = n_frames
+
+        self.observations: list[dict] = []
+        self.maps: list[NDArray[np.uint8]] = []
+
+    def update(self, observation: dict[str, int | NDArray[np.uint8]], map: NDArray[np.uint8]):
+        """
+        Args:
+            observation: from env
+            map (NDArray[np.uint8]): either the reconstructed or the ground truth map.
+        """
+        self.observations.append(observation)
+        self.maps.append(map)
+
+    def __getitem__(self, idx: int) -> TensorDict:
+        observation = self.observations[idx]
+
+        if self.n_frames is None:
+            # Single frame case
+            viewcone = prepare_viewcone(
+                observation['viewcone'],
+                observation['direction']
+            )
+        else:
+            # Pre-allocate array for all viewcones
+            viewcone = np.zeros((10, self.n_frames, 9, 9), dtype=np.uint8)
+
+            # Vectorized processing of viewcones
+            for i, obs in enumerate(self.observations[:-self.n_frames-1:-1]):
+                viewcone[:, -i-1] = prepare_viewcone(
+                    obs['viewcone'],
+                    obs['direction']
+                )
+
+        map_array = prepare_map(self.maps[idx])
+
+        return TensorDict({
+            "viewcone": torch.from_numpy(viewcone),
+            "map": torch.from_numpy(map_array),
+            "location": torch.from_numpy(observation['location']),
+            "direction": torch.tensor(observation['direction']),
+            "step": torch.tensor(observation['step'] / 100)
+        })

@@ -15,7 +15,7 @@ class ConvBlock(nn.Module):
         use_batch_norm: bool = False,
         activation = nn.ReLU
     ):
-        super(ConvBlock, self).__init__()
+        super().__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)
         self.use_batch_norm = use_batch_norm
         self.activation = activation()
@@ -43,7 +43,7 @@ class Conv3DBlock(nn.Module):
         use_batch_norm: bool = False,
         activation = nn.ReLU
     ):
-        super(Conv3DBlock, self).__init__()
+        super().__init__()
         self.conv = nn.Conv3d(in_channels, out_channels, kernel_size, stride, padding)
         self.use_batch_norm = use_batch_norm
         self.activation = activation()
