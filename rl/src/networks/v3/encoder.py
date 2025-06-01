@@ -5,6 +5,7 @@ import torch.nn as nn
 
 from tensordict.tensordict import TensorDict
 
+from ..v2.encoder import MapEncoder as V2MapEncoder, MapEncoderConfig
 from ..layers import ConvBlock, Conv3DBlock
 
 
@@ -122,6 +123,44 @@ class StateEncoder(nn.Module):
             [
                 info_embedding,
                 viewcone_embedding,
+                map_embedding
+            ],
+            dim=-1
+        )
+
+        return embedding
+
+class MapStateEncoder(nn.Module):
+    def __init__(self, config: MapEncoderConfig):
+        super().__init__()
+
+        self.config = config
+
+        self.map_encoder = V2MapEncoder(config)
+
+        self.info_encoder = nn.Sequential(
+            nn.Linear(4, 16),
+            nn.ReLU(),
+            nn.Linear(16, 16),
+            nn.ReLU(),
+        )
+
+    def forward(self, state: TensorDict):
+        info = torch.cat(
+            [
+                state['location'],
+                state['direction'].unsqueeze(-1),
+                state['step'].unsqueeze(-1),
+            ],
+            dim=-1
+        )
+
+        info_embedding = self.info_encoder(info)
+        map_embedding = self.map_encoder(state['map'])
+
+        embedding = torch.cat(
+            [
+                info_embedding,
                 map_embedding
             ],
             dim=-1
