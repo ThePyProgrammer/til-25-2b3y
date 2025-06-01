@@ -10,6 +10,7 @@ from .ppo_update import ppo_update, RewardScaling
 from .buffer import PPOExperienceBuffer
 
 from grid.utils import Point, Direction, Action
+from grid.map import tiles_to_tensor, map_to_tiles
 from grid.node import DirectionalNode
 
 from utils.state import StateManager
@@ -248,8 +249,14 @@ def evaluate(env, model, args, device, seed):
         previous_action = None
         done = False
 
-        local_state_manager = StateManager(args.temporal_frames if args.temporal_state else None)
-        global_state_manager = StateManager(args.temporal_frames if args.temporal_state else None)
+        local_state_manager = StateManager(
+            n_frames=args.temporal_frames if args.temporal_state else None,
+            use_mapped_viewcone=args.mapped_viewcone
+        )
+        global_state_manager = StateManager(
+            n_frames=args.temporal_frames if args.temporal_state else None,
+            use_mapped_viewcone=args.mapped_viewcone
+        )
 
         # Run one episode
         while not done:
@@ -281,8 +288,22 @@ def evaluate(env, model, args, device, seed):
 
             env.maps[env.scout](observation)
 
-            local_state_manager.update(observation, env.maps[env.scout].map)
-            global_state_manager.update(observation, env.state().transpose()) # convert [x, y] to [y, x]
+            if args.mapped_viewcone:
+                global_map = tiles_to_tensor(
+                    map_to_tiles(env.state().transpose()),
+                    location,
+                    direction,
+                    16,
+                    np.zeros((16, 16)),
+                    env.maps[env.scout].step_counter
+                ).unsqueeze(0)
+
+                local_state_manager.update(observation, env.maps[env.scout].get_tensor())
+                global_state_manager.update(observation, global_map) # convert [x, y] to [y, x]
+            else:
+
+                local_state_manager.update(observation, env.maps[env.scout].map)
+                global_state_manager.update(observation, env.state().transpose()) # convert [x, y] to [y, x]
 
             node: DirectionalNode = env.maps[env.scout].get_node(position, direction)
             valid_actions = set(node.children.keys())

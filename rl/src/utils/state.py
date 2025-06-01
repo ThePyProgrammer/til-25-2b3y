@@ -77,47 +77,64 @@ def prepare_map(
     return map
 
 class StateManager:
-    def __init__(self, n_frames: Optional[int] = None):
+    def __init__(
+        self,
+        n_frames: Optional[int] = None,
+        use_mapped_viewcone: bool = False,
+    ):
         self.n_frames = n_frames
+        self.use_mapped_viewcone = use_mapped_viewcone
 
         self.observations: list[dict] = []
         self.maps: list[NDArray[np.uint8]] = []
 
-    def update(self, observation: dict[str, int | NDArray[np.uint8]], map: NDArray[np.uint8]):
+    def update(self, observation: dict[str, int | NDArray[np.uint8]], map: NDArray[np.uint8] | torch.Tensor):
         """
         Args:
             observation: from env
-            map (NDArray[np.uint8]): either the reconstructed or the ground truth map.
+            map (NDArray[np.uint8] | torch.Tensor): either the reconstructed or the ground truth map.
         """
         self.observations.append(observation)
         self.maps.append(map)
 
     def __getitem__(self, idx: int) -> TensorDict:
-        observation = self.observations[idx]
+        if self.use_mapped_viewcone:
+            observation = self.observations[idx]
+            map = self.maps[idx]
 
-        if self.n_frames is None:
-            # Single frame case
-            viewcone = prepare_viewcone(
-                observation['viewcone'],
-                observation['direction']
-            )
+            return TensorDict({
+                "map": map,
+                "location": torch.from_numpy(observation['location']),
+                "direction": torch.tensor(observation['direction']),
+                "step": torch.tensor(observation['step'] / 100)
+            })
+
         else:
-            # Pre-allocate array for all viewcones
-            viewcone = np.zeros((10, self.n_frames, 9, 9), dtype=np.uint8)
+            observation = self.observations[idx]
 
-            # Vectorized processing of viewcones
-            for i, obs in enumerate(self.observations[:-self.n_frames-1:-1]):
-                viewcone[:, -i-1] = prepare_viewcone(
-                    obs['viewcone'],
-                    obs['direction']
+            if self.n_frames is None:
+                # Single frame case
+                viewcone = prepare_viewcone(
+                    observation['viewcone'],
+                    observation['direction']
                 )
+            else:
+                # Pre-allocate array for all viewcones
+                viewcone = np.zeros((10, self.n_frames, 9, 9), dtype=np.uint8)
 
-        map_array = prepare_map(self.maps[idx])
+                # Vectorized processing of viewcones
+                for i, obs in enumerate(self.observations[:-self.n_frames-1:-1]):
+                    viewcone[:, -i-1] = prepare_viewcone(
+                        obs['viewcone'],
+                        obs['direction']
+                    )
 
-        return TensorDict({
-            "viewcone": torch.from_numpy(viewcone),
-            "map": torch.from_numpy(map_array),
-            "location": torch.from_numpy(observation['location']),
-            "direction": torch.tensor(observation['direction']),
-            "step": torch.tensor(observation['step'] / 100)
-        })
+            map_array = prepare_map(self.maps[idx])
+
+            return TensorDict({
+                "viewcone": torch.from_numpy(viewcone),
+                "map": torch.from_numpy(map_array),
+                "location": torch.from_numpy(observation['location']),
+                "direction": torch.tensor(observation['direction']),
+                "step": torch.tensor(observation['step'] / 100)
+            })

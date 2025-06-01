@@ -23,7 +23,9 @@ from networks.v2.ppo import (
     ValueNetworkConfig
 )
 from networks.v3.encoder import StateEncoderConfig
-from networks.v3.utils import initialize_model
+from networks.v3.utils import initialize_model as v3_init_model
+from networks.v2.encoder import MapEncoderConfig, TemporalMapEncoderConfig
+from networks.v2.utils import initialize_model as v2_init_model
 
 from utils import count_parameters
 from utils.wrapper import ScoutWrapper, CustomRewardsWrapper, CustomStateWrapper, TimeoutResetWrapper
@@ -66,30 +68,62 @@ def main(args):
     CHANNELS, MAP_SIZE, ACTION_DIM = 12, 31, 4
     print(f"Detected Map size: {MAP_SIZE}, Channels: {CHANNELS}, Action Dim: {ACTION_DIM}")
 
-    assert args.temporal_state
-    assert args.temporal_frames
+    if not args.mapped_viewcone:
+        assert args.temporal_state
+        assert args.temporal_frames
 
-    encoder_config = StateEncoderConfig(
-        n_frames=args.temporal_frames
-    )
+        encoder_config = StateEncoderConfig(
+            n_frames=args.temporal_frames
+        )
 
-    actor_config = DiscretePolicyConfig(
-        input_dim=400,
-        action_dim=ACTION_DIM,
-        hidden_dims=[128, 128, 128]
-    )
+        actor_config = DiscretePolicyConfig(
+            input_dim=400,
+            action_dim=ACTION_DIM,
+            hidden_dims=[128, 128, 128]
+        )
 
-    critic_config = ValueNetworkConfig(
-        input_dim=400,
-        hidden_dims=[128, 128, 128]
-    )
+        critic_config = ValueNetworkConfig(
+            input_dim=400,
+            hidden_dims=[128, 128, 128]
+        )
 
-    model = initialize_model(
-        encoder_config,
-        actor_config,
-        critic_config,
-        "cuda"
-    )
+        model = v3_init_model(
+            encoder_config,
+            actor_config,
+            critic_config,
+            "cuda"
+        )
+    else:
+        encoder_config = MapEncoderConfig(
+            map_size = 16,
+            channels = 12,
+            output_dim = 64,
+            conv_layers = [64, 64, 64, 64],
+            kernel_sizes = [7, 3, 3, 3],
+            strides = [1, 1, 1, 1],
+            use_batch_norm = True,
+            dropout_rate = 0.1,
+            use_layer_norm = False,
+            use_center_only = True,
+        )
+
+        actor_config = DiscretePolicyConfig(
+            input_dim=64,
+            action_dim=ACTION_DIM,
+            hidden_dims=[128, 128, 128]
+        )
+
+        critic_config = ValueNetworkConfig(
+            input_dim=64,
+            hidden_dims=[128, 128, 128]
+        )
+
+        model = v2_init_model(
+            encoder_config,
+            actor_config,
+            critic_config,
+            "cuda"
+        )
 
     if args.orthogonal_init:
         model.apply(orthogonal_init)
