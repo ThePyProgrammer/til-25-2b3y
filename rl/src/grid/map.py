@@ -386,7 +386,7 @@ class Map:
                                 if adj_action in adj_node.children:
                                     del adj_node.children[adj_action]
 
-    def create_trajectory_tree(self, position, direction=None, parallel=False):
+    def create_trajectory_tree(self, position: Point | tuple, direction: Optional[Direction] = None):
         """
         Create a trajectory tree starting from a specific position and direction.
 
@@ -407,6 +407,11 @@ class Map:
         self.trees.append(tree)
 
         return tree
+
+    def create_particle_filtering(self, position: Point | tuple, direction: Optional[Direction] = None):
+        # Convert tuple to Point if necessary
+        if isinstance(position, tuple):
+            position = Point(position[0], position[1])
 
     def get_tensor(self, frames: Optional[int] = None) -> torch.Tensor:
         """
