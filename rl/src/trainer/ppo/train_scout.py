@@ -108,17 +108,17 @@ def main(args):
         )
 
         actor_config = DiscretePolicyConfig(
-            input_dim=64,
+            input_dim=80,
             action_dim=ACTION_DIM,
             hidden_dims=[128, 128, 128]
         )
 
         critic_config = ValueNetworkConfig(
-            input_dim=64,
+            input_dim=80,
             hidden_dims=[128, 128, 128]
         )
 
-        model = v2_init_model(
+        model = v3_init_model(
             encoder_config,
             actor_config,
             critic_config,

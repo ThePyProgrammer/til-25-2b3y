@@ -62,8 +62,14 @@ def run_episode(
 
     done = False
 
-    local_state_manager = StateManager(args.temporal_frames if args.temporal_state else None)
-    global_state_manager = StateManager(args.temporal_frames if args.temporal_state else None)
+    local_state_manager = StateManager(
+        n_frames=args.temporal_frames if args.temporal_state else None,
+        use_mapped_viewcone=args.mapped_viewcone
+    )
+    global_state_manager = StateManager(
+        n_frames=args.temporal_frames if args.temporal_state else None,
+        use_mapped_viewcone=args.mapped_viewcone
+    )
 
     while not done:
         observation, reward, termination, truncation, info = env.last()
@@ -103,8 +109,26 @@ def run_episode(
 
         env.maps[env.scout](observation)
 
-        local_state_manager.update(observation, env.maps[env.scout].map)
-        global_state_manager.update(observation, env.state().transpose()) # convert [x, y] to [y, x]
+        location = observation["location"]
+        position = Point(int(location[0]), int(location[1]))
+        direction = Direction(observation["direction"])
+
+        if args.mapped_viewcone:
+            global_map = tiles_to_tensor(
+                map_to_tiles(env.state().transpose()),
+                location,
+                direction,
+                16,
+                np.zeros((16, 16)),
+                env.maps[env.scout].step_counter
+            ).unsqueeze(0)
+
+            local_state_manager.update(observation, env.maps[env.scout].get_tensor())
+            global_state_manager.update(observation, global_map) # convert [x, y] to [y, x]
+        else:
+
+            local_state_manager.update(observation, env.maps[env.scout].map)
+            global_state_manager.update(observation, env.state().transpose()) # convert [x, y] to [y, x]
 
         actor_input = local_state_manager[-1]
         critic_input = global_state_manager[-1] if args.global_critic else actor_input
@@ -120,9 +144,6 @@ def run_episode(
         max_retries = 3
         tries = 0
 
-        location = observation["location"]
-        position = Point(int(location[0]), int(location[1]))
-        direction = Direction(observation["direction"])
         node: DirectionalNode = env.maps[env.scout].get_node(position, direction)
         valid_actions = set(node.children.keys())
         action = None
