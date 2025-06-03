@@ -51,6 +51,7 @@ class OCRManager:
         self.use_threshold = True # whether to use cv to clean bleedthrough
 
         # not the same as ^^
+        self.shortcut_image_head: Optional[float] = 0.12
         self.shortcut_threshold: Optional[int] = 80 # none for no shortcut
         self.shortcut_lines: int = 2
 
@@ -212,7 +213,7 @@ class OCRManager:
         return self._postprocess_pages(preds.pages)
 
     def _shortcut_inference(self, batch: list):
-        batch = [get_image_head(image) for image in batch]
+        batch = [get_image_head(image, head_pct=self.shortcut_image_head) for image in batch]
         with torch.amp.autocast('cuda', enabled=torch.cuda.is_available(), dtype=torch.float16):
             preds = self.ocr_model(batch)
 
