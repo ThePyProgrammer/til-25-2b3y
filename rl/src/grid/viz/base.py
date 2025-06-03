@@ -239,7 +239,7 @@ class MapVisualizer:
 
             # Draw the tile type
             tile_type = tile_types[x][y]
-            if tile_type != TileContent.NO_VISION:  # Skip NO_VISION
+            if tile_type != TileContent.NO_VISION and tile_type is not None:  # Skip NO_VISION
                 Tile(tile_type).draw(self.window, x, y, int(pix_square_size))
 
             # Draw walls - can use tile_obj properties but continue to use wall array for consistency

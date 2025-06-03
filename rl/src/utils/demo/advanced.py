@@ -106,7 +106,8 @@ class AdvancedDemo(BaseDemo):
     def initialize_agent_map_advanced(self, agent):
         """Initialize map and pathfinder for an agent with advanced options."""
         self.agent_maps[agent] = Map()
-        self.agent_maps[agent].create_trajectory_tree(Point(0, 0))
+        # self.agent_maps[agent].create_trajectory_tree(Point(0, 0))
+        self.agent_maps[agent].create_particle_filter(Point(0, 0))
         self.agent_pathfinders[agent] = Pathfinder(
             self.agent_maps[agent],
             PathfinderConfig(
@@ -140,7 +141,8 @@ class AdvancedDemo(BaseDemo):
         # Initialize a map for the scout if not already done
         if self.scout not in self.agent_maps:
             self.agent_maps[self.scout] = Map()
-            self.agent_maps[self.scout].create_trajectory_tree(Point(0, 0))
+            # self.agent_maps[self.scout].create_trajectory_tree(Point(0, 0))
+            self.agent_maps[self.scout].create_particle_filter(Point(0, 0))
 
     def process_agent(self, agent, observation):
         """Process an agent's observation and decide on an action."""
@@ -172,12 +174,17 @@ class AdvancedDemo(BaseDemo):
 
         # Simple pathfinding toward target
         current = Point(location[0], location[1])
-        if current.distance_to(self.scout_target) < 1.5:
-            # We've reached the target, just wait
-            return 0  # Stand still
+        # if current.distance_to(self.scout_target) < 1.5:
+        #     # We've reached the target, just wait
+        #     return 0  # Stand still
 
-        # Use the pathfinder to navigate to the target
-        self.agent_maps[self.scout].set_target(self.scout_target)
+        if self.scout_target is not None:
+            return int(self.agent_pathfinders[self.scout].get_optimal_action(
+                current,
+                Direction(direction),
+                0,
+                destination=self.scout_target
+            ))
         return int(self.agent_pathfinders[self.scout].get_optimal_action(
             current, Direction(direction), 0
         ))

@@ -15,7 +15,8 @@ from .utils import (
 )
 from .node import NodeRegistry, DirectionalNode
 from .trajectory import TrajectoryTree
-from ..utils.state import unpack_bits
+from .particle import ParticleTree
+from utils.state import unpack_bits
 
 
 def get_init_map_array(size):
@@ -60,7 +61,7 @@ class Map:
         self.maps: list[NDArray] = []
         self.time_since_updates: list[NDArray] = []
 
-        self.trees: list[TrajectoryTree] = []
+        self.trees: list[TrajectoryTree | ParticleTree] = []
 
     def _populate_nodes(self):
         """Populate all possible nodes in the grid (assuming no walls)."""
@@ -408,10 +409,17 @@ class Map:
 
         return tree
 
-    def create_particle_filtering(self, position: Point | tuple, direction: Optional[Direction] = None):
+    def create_particle_filter(self, position: Point | tuple, direction: Optional[Direction] = None):
         # Convert tuple to Point if necessary
         if isinstance(position, tuple):
             position = Point(position[0], position[1])
+
+        # Create a trajectory tree with the current map's registry
+        tree = ParticleTree(self, position, direction, min_total_particles=1000000, size=self.size, registry=self.registry)
+
+        self.trees.append(tree)
+
+        return tree
 
     def get_tensor(self, frames: Optional[int] = None) -> torch.Tensor:
         """
