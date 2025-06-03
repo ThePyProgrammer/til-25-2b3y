@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 
 from ..node import DirectionalNode
-from ..utils import Action
+from ..utils import Action, Point
 
 
 @dataclass
@@ -20,6 +20,8 @@ class NodeParticles:
             Action.STAY: 0,
         }
     )
+
+    previous_positions: set[Point] = field(default_factory=set)
 
     @property
     def probability(self):

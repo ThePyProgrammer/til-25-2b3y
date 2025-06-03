@@ -3,10 +3,20 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .particle import NodeParticles
-from ..utils import Point, Direction, Tile
+from ..utils import Point, Direction, Tile, Action
 from ..node import NodeRegistry, DirectionalNode
 
-from .constraints import Constraints, ParticleConstraints, TemporalConstraints
+from .constraints import ParticleConstraints, TemporalConstraints
+
+
+class ActionPreference:
+    CONTINUATION_WEIGHT = 5.0    # Weight for continuing same action (forward/backward)
+    MOVEMENT_WEIGHT = 3.0        # Weight for movement actions after left/right or stay
+    BASE_WEIGHT = 1.0            # Base weight for other actions
+
+class ConstraintPreference:
+    ROUTE_EXCLUDE_PENALTY = 0.2  # Penalty for being at excluded route position
+    ROUTE_INCLUDE_BOOST = 2.5    # Boost for being at required route position
 
 
 class ParticleTree:
@@ -64,7 +74,11 @@ class ParticleTree:
 
         for step in range(self.last_seen_step, self.num_step):
             particles = propagate_particles(particles)
-            particles = apply_particle_reweigh(particles, self.temporal_constraints[step])
+            particles = apply_particle_reweigh(
+                particles,
+                self.temporal_constraints.hard_constraints[step],
+                self.temporal_constraints.soft_constraints[step],
+            )
             particles = resample_particles(particles, min_total_particles=self.min_total_particles)
 
         self.particles = particles
@@ -118,7 +132,11 @@ class ParticleTree:
 
             self.particles = {root: NodeParticles(1, 1, root) for root in self.roots}
         else:
-            self.particles = apply_particle_reweigh(self.particles, constraints)
+            self.particles = apply_particle_reweigh(
+                self.particles,
+                self.temporal_constraints.hard_constraints[-1],
+                self.temporal_constraints.soft_constraints[-1]
+            )
 
         self.resample()
 
@@ -152,7 +170,9 @@ class ParticleTree:
         return probas / probas.sum()
 
     def check_wall_trajectories(self, *args, **kwargs):
+        """For compatibility with TrajectoryTree"""
         pass
+
 
 def resample_particles(
     particles: dict[DirectionalNode, NodeParticles],
@@ -193,70 +213,175 @@ def propagate_particles(particles) -> dict[DirectionalNode, NodeParticles]:
 
     for node, node_particles in particles.items():
         if node.children:
-            distribute_particles_to_children(node, node_particles, new_particles)
+            new_particles = distribute_particles_to_children(node, node_particles, new_particles)
         else:
             # Leaf node - particles stay at current position
             new_particles[node] = node_particles
 
     return new_particles
 
-def distribute_particles_to_children(
+def _get_preference_bonus(
+    prev_action: Action,
+    current_action: Action,
+) -> float:
+    """Calculate preference bonus for action transition."""
+    if prev_action in [Action.FORWARD, Action.BACKWARD] and current_action == prev_action:
+        # Previous was forward/backward: prefer continuing same action
+        return ActionPreference.CONTINUATION_WEIGHT - ActionPreference.BASE_WEIGHT
+
+    elif prev_action in [Action.LEFT, Action.RIGHT] and current_action in [Action.FORWARD, Action.BACKWARD]:
+        # Previous was left/right: prefer forward/backward
+        return ActionPreference.MOVEMENT_WEIGHT - ActionPreference.BASE_WEIGHT
+
+    elif prev_action == Action.STAY and current_action != Action.STAY:
+        # Previous was stay: prefer movement actions
+        return ActionPreference.MOVEMENT_WEIGHT - ActionPreference.BASE_WEIGHT
+
+    return 0.0
+
+def _apply_action_preferences(
+    action_weights: dict[Action, float],
+    available_actions: list[Action],
+    incoming_action_counts: dict[Action, int]
+) -> dict[Action, float]:
+    """Apply action preferences based on incoming action history."""
+    total_incoming = sum(incoming_action_counts.values())
+    if total_incoming == 0:
+        return action_weights
+
+    for prev_action, count in incoming_action_counts.items():
+        action_proportion = count / total_incoming
+
+        for action in available_actions:
+            bonus_weight = _get_preference_bonus(prev_action, action)
+            action_weights[action] += bonus_weight * action_proportion
+
+    return action_weights
+
+def _distribute_particle_counts(
+    available_actions: list[Action],
+    total_particles: int,
+    action_probabilities: dict[Action, float]
+) -> dict[Action, int]:
+    """Distribute particle counts based on action probabilities."""
+    particle_distribution = {}
+    remaining_particles = total_particles
+
+    for i, action in enumerate(available_actions):
+        if i == len(available_actions) - 1:
+            # Give all remaining particles to the last action to avoid rounding errors
+            particle_distribution[action] = remaining_particles
+        else:
+            action_particles = int(total_particles * action_probabilities[action])
+            particle_distribution[action] = action_particles
+            remaining_particles -= action_particles
+
+    return particle_distribution
+
+def _update_child_particles(
     node: DirectionalNode,
     node_particles: NodeParticles,
+    particle_distribution: dict[Action, int],
     new_particles: dict[DirectionalNode, NodeParticles]
 ) -> None:
-    """Distribute particles from a parent node to its children based on available actions."""
-    num_actions = len(node.children)
-    particles_per_action = node_particles.count // num_actions
-    remaining_particles = node_particles.count % num_actions
-
-    for i, (action, child_node) in enumerate(node.children.items()):
-        action_particles = particles_per_action
-        if i < remaining_particles:
-            action_particles += 1
-
+    """Update child particles with distributed counts."""
+    for action, action_particles in particle_distribution.items():
         if action_particles > 0:
+            child_node = node.children[action]
+
             if child_node in new_particles:
                 new_particles[child_node].count += action_particles
+                new_particles[child_node].previous_positions.add(node.position)
+                new_particles[child_node].previous_positions.update(node_particles.previous_positions)
             else:
+                updated_previous_positions = node_particles.previous_positions.copy()
+                updated_previous_positions.add(node.position)
+
                 new_particles[child_node] = NodeParticles(
                     count=action_particles,
                     individual_probability=node_particles.individual_probability,
-                    node=child_node
+                    node=child_node,
+                    previous_positions=updated_previous_positions
                 )
 
             new_particles[child_node].incoming_action_counts[action] = action_particles
 
+def distribute_particles_to_children(
+    node: DirectionalNode,
+    node_particles: NodeParticles,
+    new_particles: dict[DirectionalNode, NodeParticles]
+) -> dict[DirectionalNode, NodeParticles]:
+    """Distribute particles from a parent node to its children based on available actions."""
+    available_actions = list(node.children.keys())
+
+    if not available_actions:
+        return new_particles
+
+    # Calculate action weights with preferences
+    action_weights = {action: ActionPreference.BASE_WEIGHT for action in available_actions}
+    action_weights = _apply_action_preferences(
+        action_weights,
+        available_actions,
+        node_particles.incoming_action_counts
+    )
+
+    total_weight = sum(action_weights.values())
+    action_probabilities = {action: weight / total_weight for action, weight in action_weights.items()}
+
+    # Distribute particles based on probabilities
+    particle_distribution = _distribute_particle_counts(
+        available_actions,
+        node_particles.count,
+        action_probabilities
+    )
+
+    # Update child particles
+    _update_child_particles(node, node_particles, particle_distribution, new_particles)
+
+    return new_particles
+
 def apply_particle_reweigh(
     particles: dict[DirectionalNode, NodeParticles],
-    constraints: ParticleConstraints
+    hard_constraints: ParticleConstraints,
+    soft_constraints: ParticleConstraints
 ) -> dict[DirectionalNode, NodeParticles]:
     """
     Apply proba updates to the particles based on constraints.
 
-    Route contains: Increase proba since particle should have been here
-    Route excludes: Decrease proba since particle should not have been here
-    Tail contains: Zero proba everywhere else since particle must be here. (should be handled by prune() when scout seen.)
-    Tail excludes: Zero proba since particle cannot must not be here.
+    Hard constraints (zero out probability):
+    - Route contains: Zero proba if particle hasn't visited all required route positions
+    - Tail contains: Zero proba everywhere else since particle must be here. (should be handled by prune() when scout seen.)
+    - Tail excludes: Zero proba since particle cannot must not be here.
+
+    Soft constraints (modify probability):
+    - Route excludes: Decrease proba since particle should not have been here
+    - Route contains (soft): Increase proba since particle should have been here
     """
-    if not constraints:
+    if not hard_constraints:
         return particles
 
     updated_particles = {}
 
     for node, node_particles in particles.items():
         current_position = node.position
+        previous_positions = node_particles.previous_positions
 
         # Apply tail constraints (most restrictive)
 
         # Tail excludes: Zero probability if particle is at excluded tail position
-        if current_position in constraints.tail.excludes:
+        if current_position in hard_constraints.tail.excludes:
             node_particles.individual_probability = 0.0
             updated_particles[node] = node_particles
             continue
 
         # Tail contains: Zero probability if particle is not at required tail position
-        if constraints.tail.contains and current_position not in constraints.tail.contains:
+        if hard_constraints.tail.contains and current_position not in hard_constraints.tail.contains:
+            node_particles.individual_probability = 0.0
+            updated_particles[node] = node_particles
+            continue
+
+        # Route contains (hard constraint): Zero probability if particle hasn't visited all required route positions
+        if hard_constraints.route.contains and not hard_constraints.route.contains.issubset(previous_positions):
             node_particles.individual_probability = 0.0
             updated_particles[node] = node_particles
             continue
@@ -265,12 +390,12 @@ def apply_particle_reweigh(
         probability_modifier = 1.0
 
         # Route excludes: Decrease probability if particle is at excluded route position
-        if current_position in constraints.route.excludes:
-            probability_modifier *= 0.1  # Significant penalty
+        if current_position in soft_constraints.route.excludes:
+            probability_modifier *= ConstraintPreference.ROUTE_EXCLUDE_PENALTY
 
         # Route contains: Increase probability if particle is at required route position
-        elif current_position in constraints.route.contains:
-            probability_modifier *= 2.0  # Boost probability
+        elif current_position in soft_constraints.route.contains:
+            probability_modifier *= ConstraintPreference.ROUTE_INCLUDE_BOOST
 
         # Apply the probability modifier
         node_particles.individual_probability *= probability_modifier

@@ -227,12 +227,12 @@ class MapVisualizer:
         tile_types = self.map.get_tile_type()
         walls = self.map.get_walls()
         scouts, guards = self.map.get_agents()
-        visited = self.map.get_visited()
+        # visited = self.map.get_visited()
 
         # Draw all tiles and walls
         for x, y in np.ndindex((self.map.size, self.map.size)):
-            if not visited[x, y]:
-                continue
+            # if not visited[x, y]:
+            #     continue
 
             # Get tile object from raw value for easier property access
             # tile_obj = UtilTile(self.map.map[x, y])
@@ -262,7 +262,7 @@ class MapVisualizer:
         if self.font is not None:
             time_since_update = self.map.time_since_update
             for x, y in np.ndindex((self.map.size, self.map.size)):
-                if visited[x, y] and time_since_update[x, y] < self.map.step_counter:
+                if time_since_update[x, y] < self.map.step_counter:
                     # Only display time for visited cells that have been updated
                     center = (np.array([x, y]) + 0.5) * pix_square_size
                     self._draw_text(
