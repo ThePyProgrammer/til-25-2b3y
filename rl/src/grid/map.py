@@ -472,7 +472,7 @@ class Map:
             return output
 
 def map_to_tiles(map: NDArray):
-    return [[Tile(map[y, x]) for y in range(16)] for x in range(16)]
+    return [[Tile(map[x, y]) for y in range(16)] for x in range(16)]
 
 def to_centered_coords(x: int, y: int, agent_loc, center: int):
     # Calculate offsets to place agent at center

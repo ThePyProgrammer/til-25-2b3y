@@ -9,7 +9,7 @@ from grid.utils import Point
 from grid.map import Direction, Map
 from grid.pathfinder import Pathfinder, PathfinderConfig
 from utils.demo.base import BaseDemo
-from utils.demo.visualization import combine_views_grid, normalize_proba_density
+from utils.demo.visualization import combine_views_grid, normalize_proba_density, combine_views
 from utils.demo.recording import save_frame
 from utils.demo.rl_agent import RLScoutAgent
 from grid.viz import MapVisualizer
@@ -142,7 +142,7 @@ class AdvancedDemo(BaseDemo):
         if self.scout not in self.agent_maps:
             self.agent_maps[self.scout] = Map()
             # self.agent_maps[self.scout].create_trajectory_tree(Point(0, 0))
-            self.agent_maps[self.scout].create_particle_filter(Point(0, 0))
+            # self.agent_maps[self.scout].create_particle_filter(Point(0, 0))
 
     def process_agent(self, agent, observation):
         """Process an agent's observation and decide on an action."""
@@ -177,6 +177,7 @@ class AdvancedDemo(BaseDemo):
         # if current.distance_to(self.scout_target) < 1.5:
         #     # We've reached the target, just wait
         #     return 0  # Stand still
+        self.agent_maps[self.scout](observation)
 
         if self.scout_target is not None:
             return int(self.agent_pathfinders[self.scout].get_optimal_action(
@@ -199,24 +200,26 @@ class AdvancedDemo(BaseDemo):
         agent_idx = self.agent_grid_positions.get(agent)
 
         if agent in self.agent_maps:
-            reconstructed_map = MapVisualizer(self.agent_maps[agent]).render(human_mode=False)  # BGR format
-            proba_density = self.agent_maps[agent].trees[0].probability_density if hasattr(self.agent_maps[agent], 'trees') else None
-            proba_density_viz = normalize_proba_density(proba_density)
+            if len(self.agent_maps[agent].trees) > 0:
+                reconstructed_map = MapVisualizer(self.agent_maps[agent]).render(human_mode=False)  # BGR format
+                proba_density = self.agent_maps[agent].trees[0].probability_density if hasattr(self.agent_maps[agent], 'trees') else None
+                proba_density_viz = normalize_proba_density(proba_density)
 
-            # Save the frames for this agent
-            self.agent_frames[agent]['oracle'].append(oracle_view)
-            self.agent_frames[agent]['map'].append(reconstructed_map)
-            self.agent_frames[agent]['proba'].append(proba_density_viz)
 
-            # For the guard we're specifically tracking, also save the simple combined view
-            if agent == self.guard:
-                views = [oracle_view, reconstructed_map, proba_density_viz]
-                labels = ['Oracle View', 'Reconstructed Map', 'Probability Density']
-                combined_frame = combine_views(views, labels)
-                self.frames['combined'].append(combined_frame)
+                # Save the frames for this agent
+                self.agent_frames[agent]['oracle'].append(oracle_view)
+                self.agent_frames[agent]['map'].append(reconstructed_map)
+                self.agent_frames[agent]['proba'].append(proba_density_viz)
 
-                if self.dirs:
-                    save_frame(combined_frame, self.dirs['frames_combined'], self.step)
+                # For the guard we're specifically tracking, also save the simple combined view
+                if agent == self.guard:
+                    views = [oracle_view, reconstructed_map, proba_density_viz]
+                    labels = ['Oracle View', 'Reconstructed Map', 'Probability Density']
+                    combined_frame = combine_views(views, labels)
+                    self.frames['combined'].append(combined_frame)
+
+                    if self.dirs:
+                        save_frame(combined_frame, self.dirs['frames_combined'], self.step)
 
         # Create a grid view of all agents after each step
         if agent == self.env.agents[-1] or len(self.env.agents) == 1:

@@ -243,26 +243,26 @@ class MapVisualizer:
                 Tile(tile_type).draw(self.window, x, y, int(pix_square_size))
 
             # Draw walls - can use tile_obj properties but continue to use wall array for consistency
-            if walls[x, y, 0]:  # Right wall
+            if walls[y, x, 0]:  # Right wall
                 Wall.RIGHT.draw(self.window, x, y, int(pix_square_size))
-            if walls[x, y, 1]:  # Bottom wall
+            if walls[y, x, 1]:  # Bottom wall
                 Wall.BOTTOM.draw(self.window, x, y, int(pix_square_size))
-            if walls[x, y, 2]:  # Left wall
+            if walls[y, x, 2]:  # Left wall
                 Wall.LEFT.draw(self.window, x, y, int(pix_square_size))
-            if walls[x, y, 3]:  # Top wall
+            if walls[y, x, 3]:  # Top wall
                 Wall.TOP.draw(self.window, x, y, int(pix_square_size))
 
             # Draw agents - use scouts/guards arrays for consistency
-            if scouts[x, y]:
+            if scouts[y, x]:
                 Player.SCOUT.draw(self.window, x, y, int(pix_square_size))
-            if guards[x, y]:
+            if guards[y, x]:
                 Player.GUARD.draw(self.window, x, y, int(pix_square_size))
 
         # Display time since last update for each cell
         if self.font is not None:
             time_since_update = self.map.time_since_update
             for x, y in np.ndindex((self.map.size, self.map.size)):
-                if time_since_update[x, y] < self.map.step_counter:
+                if time_since_update[y, x] < self.map.step_counter:
                     # Only display time for visited cells that have been updated
                     center = (np.array([x, y]) + 0.5) * pix_square_size
                     self._draw_text(

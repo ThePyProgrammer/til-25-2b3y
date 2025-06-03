@@ -61,6 +61,11 @@ class TemporalConstraints:
                 self.hard_constraints[previous_step].route.contains
             )
 
+        if previous_step >= 0:
+            self.soft_constraints[current_step].route.contains.update(
+                self.soft_constraints[previous_step].route.contains
+            )
+
     def __len__(self) -> int:
         return len(self.hard_constraints)
 
