@@ -15,8 +15,9 @@ class ActionPreference:
     BASE_WEIGHT = 1.0            # Base weight for other actions
 
 class ConstraintPreference:
-    ROUTE_EXCLUDE_PENALTY = 0.2  # Penalty for being at excluded route position
-    ROUTE_INCLUDE_BOOST = 2.5    # Boost for being at required route position
+    HARD_PENALTY = 0.01          # Multiplier for breaking hard constraint
+    ROUTE_EXCLUDE_PENALTY = 0.2  # Multiplier for being at excluded route position
+    ROUTE_INCLUDE_BOOST = 2.5    # Multiplier for being at required route position
 
 
 class ParticleTree:
@@ -125,18 +126,25 @@ class ParticleTree:
 
         self.temporal_constraints.update(constraints)
 
-        if scout_seen is not None:
-            # set roots to the last seen loc.
-            self.last_seen_step = self.num_step
-            self.set_roots(scout_seen, None)
+        # shortcut filtering. doesn't work because of the hard route constraint
+        # if scout_seen is not None:
+        #     # set roots to the last seen loc.
+        #     self.last_seen_step = self.num_step
+        #     self.set_roots(scout_seen, None)
 
-            self.particles = {root: NodeParticles(1, 1, root) for root in self.roots}
-        else:
-            self.particles = apply_particle_reweigh(
-                self.particles,
-                self.temporal_constraints.hard_constraints[-1],
-                self.temporal_constraints.soft_constraints[-1]
-            )
+        #     self.particles = {root: NodeParticles(1, 1, root) for root in self.roots}
+        # else:
+        #     self.particles = apply_particle_reweigh(
+        #         self.particles,
+        #         self.temporal_constraints.hard_constraints[-1],
+        #         self.temporal_constraints.soft_constraints[-1]
+        #     )
+
+        self.particles = apply_particle_reweigh(
+            self.particles,
+            self.temporal_constraints.hard_constraints[-1],
+            self.temporal_constraints.soft_constraints[-1]
+        )
 
         self.resample()
 
@@ -366,39 +374,25 @@ def apply_particle_reweigh(
         current_position = node.position
         previous_positions = node_particles.previous_positions
 
-        # Apply tail constraints (most restrictive)
-
         # Tail excludes: Zero probability if particle is at excluded tail position
         if current_position in hard_constraints.tail.excludes:
-            node_particles.individual_probability = 0.0
-            updated_particles[node] = node_particles
-            continue
+            node_particles.individual_probability *= ConstraintPreference.HARD_PENALTY
 
         # Tail contains: Zero probability if particle is not at required tail position
         if hard_constraints.tail.contains and current_position not in hard_constraints.tail.contains:
-            node_particles.individual_probability = 0.0
-            updated_particles[node] = node_particles
-            continue
+            node_particles.individual_probability *= ConstraintPreference.HARD_PENALTY
 
         # Route contains (hard constraint): Zero probability if particle hasn't visited all required route positions
         if hard_constraints.route.contains and not hard_constraints.route.contains.issubset(previous_positions):
-            node_particles.individual_probability = 0.0
-            updated_particles[node] = node_particles
-            continue
-
-        # Apply route constraints (modify probability but don't zero out)
-        probability_modifier = 1.0
+            node_particles.individual_probability *= ConstraintPreference.HARD_PENALTY
 
         # Route excludes: Decrease probability if particle is at excluded route position
         if current_position in soft_constraints.route.excludes:
-            probability_modifier *= ConstraintPreference.ROUTE_EXCLUDE_PENALTY
+            node_particles.individual_probability *= ConstraintPreference.ROUTE_EXCLUDE_PENALTY
 
         # Route contains: Increase probability if particle is at required route position
         elif current_position in soft_constraints.route.contains:
-            probability_modifier *= ConstraintPreference.ROUTE_INCLUDE_BOOST
-
-        # Apply the probability modifier
-        node_particles.individual_probability *= probability_modifier
+            node_particles.individual_probability *= ConstraintPreference.ROUTE_INCLUDE_BOOST
 
         # Only keep particles with non-zero probability
         if node_particles.individual_probability > 0:
