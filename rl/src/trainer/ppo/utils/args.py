@@ -40,6 +40,8 @@ def parse_args():
     parser.add_argument('--render', action='store_true', help='render environment during training')
     parser.add_argument('--experiment_name', type=str, default='ppo', help='experiment name')
 
+    parser.add_argument('--mapped_viewcone', action='store_true', help='use mapped viewcone')
+
     parser.add_argument('--num_guards', type=int, default=3, help='number of guards')
     parser.add_argument('--guards_spawnrate', type=float, default=0.5, help='rate at which guard spawn so that num. of guard varies.')
     parser.add_argument('--guards_difficulty', type=float, default=1.0, help='1.0 means no random behaviours, 0.0 means all random behaviours')

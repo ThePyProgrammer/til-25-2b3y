@@ -13,17 +13,19 @@ from til_environment.types import RewardNames
 from trainer.ppo.utils.args import parse_args
 from trainer.ppo.utils.environment import set_seeds
 from trainer.ppo.utils.model_utils import initialize_optimizer, load_checkpoint, apply_model_precision
-from trainer.ppo.utils.scout_training_loop import train_scout
-from trainer.ppo.utils.buffer import ExperienceBuffer
+from trainer.ppo.utils.scout_training_loop import train as train_scout
+from trainer.ppo.utils.buffer import PPOExperienceBuffer
 from trainer.ppo.utils.scheduler import create_scheduler
 
 from networks.v2.init import orthogonal_init
-from networks.v2.encoder import MapEncoderConfig, TemporalMapEncoderConfig
 from networks.v2.ppo import (
     DiscretePolicyConfig,
     ValueNetworkConfig
 )
-from networks.v2.utils import initialize_model
+from networks.v3.encoder import StateEncoderConfig
+from networks.v3.utils import initialize_model as v3_init_model
+from networks.v2.encoder import MapEncoderConfig, TemporalMapEncoderConfig
+from networks.v2.utils import initialize_model as v2_init_model
 
 from utils import count_parameters
 from utils.wrapper import ScoutWrapper, CustomRewardsWrapper, CustomStateWrapper, TimeoutResetWrapper
@@ -66,63 +68,62 @@ def main(args):
     CHANNELS, MAP_SIZE, ACTION_DIM = 12, 31, 4
     print(f"Detected Map size: {MAP_SIZE}, Channels: {CHANNELS}, Action Dim: {ACTION_DIM}")
 
-    if args.temporal_state:
+    if not args.mapped_viewcone:
+        assert args.temporal_state
         assert args.temporal_frames
 
-        encoder_config = TemporalMapEncoderConfig(
+        encoder_config = StateEncoderConfig(
+            n_frames=args.temporal_frames
+        )
+
+        actor_config = DiscretePolicyConfig(
+            input_dim=400,
+            action_dim=ACTION_DIM,
+            hidden_dims=[128, 128, 128]
+        )
+
+        critic_config = ValueNetworkConfig(
+            input_dim=400,
+            hidden_dims=[128, 128, 128]
+        )
+
+        model = v3_init_model(
+            encoder_config,
+            actor_config,
+            critic_config,
+            "cuda"
+        )
+    else:
+        encoder_config = MapEncoderConfig(
             map_size = 16,
             channels = 12,
-            output_dim = 48,
-
-            conv3d_channels = [16, 16, 24, 24, 32, 32, 32, 48, 48],
-            conv3d_kernel_sizes = [(3, 3, 3), (3, 3, 3), (3, 3, 3), (3, 3, 3), (3, 3, 3), (3, 3, 3), (3, 3, 3), (3, 3, 3), (3, 3, 3)],
-            conv3d_strides = [(1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1)],
-            conv3d_paddings = [(1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (0, 0, 0)],
-
-            conv_layers = [48],
-            kernel_sizes = [3],
-            strides = [1],
-            paddings = [0],
-
+            output_dim = 64,
+            conv_layers = [64, 64, 64, 64],
+            kernel_sizes = [7, 3, 3, 3],
+            strides = [1, 1, 1, 1],
             use_batch_norm = True,
             dropout_rate = 0.1,
-            use_layer_norm = True,
+            use_layer_norm = False,
             use_center_only = True,
         )
 
         actor_config = DiscretePolicyConfig(
-            input_dim=48,
+            input_dim=80,
             action_dim=ACTION_DIM,
-            hidden_dims=[48, 48, 48, 48]
+            hidden_dims=[128, 128, 128]
         )
 
         critic_config = ValueNetworkConfig(
-            input_dim=48,
-            hidden_dims=[48, 48, 48, 48]
-        )
-    else:
-        encoder_config = MapEncoderConfig(
-            kernel_sizes=[7, 3, 3, 3],
-            output_dim=32
+            input_dim=80,
+            hidden_dims=[128, 128, 128]
         )
 
-        actor_config = DiscretePolicyConfig(
-            input_dim=32,
-            action_dim=ACTION_DIM,
-            hidden_dims=[32, 32]
+        model = v3_init_model(
+            encoder_config,
+            actor_config,
+            critic_config,
+            "cuda"
         )
-
-        critic_config = ValueNetworkConfig(
-            input_dim=32,
-            hidden_dims=[32, 32]
-        )
-
-    model = initialize_model(
-        encoder_config,
-        actor_config,
-        critic_config,
-        "cuda"
-    )
 
     if args.orthogonal_init:
         model.apply(orthogonal_init)
@@ -147,7 +148,7 @@ def main(args):
         start_timesteps, success = load_checkpoint(checkpoint_path, model, optimizer, scheduler)
 
     # Initialize experience buffer
-    buffer = ExperienceBuffer()
+    buffer = PPOExperienceBuffer()
 
     # Run training loop
     train_scout(env, model, optimizer, scheduler, buffer, args)

@@ -15,6 +15,8 @@ from .utils import (
 )
 from .node import NodeRegistry, DirectionalNode
 from .trajectory import TrajectoryTree
+from .particle import ParticleTree
+from utils.state import unpack_bits
 
 
 def get_init_map_array(size):
@@ -59,7 +61,7 @@ class Map:
         self.maps: list[NDArray] = []
         self.time_since_updates: list[NDArray] = []
 
-        self.trees: list[TrajectoryTree] = []
+        self.trees: list[TrajectoryTree | ParticleTree] = []
 
     def _populate_nodes(self):
         """Populate all possible nodes in the grid (assuming no walls)."""
@@ -385,7 +387,7 @@ class Map:
                                 if adj_action in adj_node.children:
                                     del adj_node.children[adj_action]
 
-    def create_trajectory_tree(self, position, direction=None, parallel=False):
+    def create_trajectory_tree(self, position: Point | tuple, direction: Optional[Direction] = None):
         """
         Create a trajectory tree starting from a specific position and direction.
 
@@ -402,6 +404,18 @@ class Map:
 
         # Create a trajectory tree with the current map's registry
         tree = TrajectoryTree(self, position, direction, self.size, registry=self.registry)
+
+        self.trees.append(tree)
+
+        return tree
+
+    def create_particle_filter(self, position: Point | tuple, direction: Optional[Direction] = None):
+        # Convert tuple to Point if necessary
+        if isinstance(position, tuple):
+            position = Point(position[0], position[1])
+
+        # Create a trajectory tree with the current map's registry
+        tree = ParticleTree(self, position, direction, min_total_particles=1000000, size=self.size, registry=self.registry)
 
         self.trees.append(tree)
 
@@ -458,7 +472,7 @@ class Map:
             return output
 
 def map_to_tiles(map: NDArray):
-    return [[Tile(map[y, x]) for y in range(16)] for x in range(16)]
+    return [[Tile(map[x, y]) for y in range(16)] for x in range(16)]
 
 def to_centered_coords(x: int, y: int, agent_loc, center: int):
     # Calculate offsets to place agent at center
@@ -470,6 +484,117 @@ def to_centered_coords(x: int, y: int, agent_loc, center: int):
     new_y = y + y_offset
 
     return new_x, new_y
+
+def map_to_tensor(
+    map_array: NDArray[np.uint8],
+    location: NDArray | tuple[int],
+    direction: int | Direction,
+    time_since_update: NDArray,
+    step_num: int
+) -> torch.Tensor:
+    """
+    Convert a packed uint8 map array to a tensor using efficient bit unpacking.
+
+    - Channel 0: top_wall (0/1)
+    - Channel 1: left_wall (0/1)
+    - Channel 2: bottom_wall (0/1)
+    - Channel 3: right_wall (0/1)
+    - Channel 4: guard (0/1)
+    - Channel 5: scout (0/1)
+    - Channel 6: no vision (0/1)
+    - Channel 7: empty tiles (0/1)
+    - Channel 8: recon tiles (0/1)
+    - Channel 9: mission tiles (0/1)
+    - Channel 10: time_since_updated (0-1)
+    - Channel 11: step (0-1) normalised from 0-100 to 0-1
+
+    Args:
+        map_array: Packed uint8 array of shape [height, width]
+        location: Agent location as array or tuple
+        direction: Agent direction (0:right, 1:down, 2:left, 3:up)
+        time_since_update: Array tracking time since each cell was updated
+        step_num: Current step number
+
+    Returns:
+        torch.Tensor: A tensor of shape (12, 31, 31) with channels:
+            0: top wall, 1: left wall, 2: bottom wall, 3: right wall,
+            4: guard, 5: scout, 6: no vision, 7: is empty,
+            8: recon point, 9: mission point, 10: time_since_update, 11: step
+    """
+    size = map_array.shape[0]
+
+    # Use unpack_bits to efficiently extract all channels at once
+    # unpack_bits returns shape [10, height, width] with channels:
+    # 0: top wall, 1: left wall, 2: bottom wall, 3: right wall,
+    # 4: guard, 5: scout, 6: no vision, 7: is empty, 8: recon point, 9: mission point
+    unpacked_map = unpack_bits(map_array)
+
+    # Output tensor size
+    tensor_size = 16 * 2 - 1  # 31x31
+    center = tensor_size // 2  # Center position is 15
+
+    # Extract location coordinates
+    if isinstance(location, tuple):
+        if len(location) >= 2:
+            loc_x, loc_y = location[0], location[1]
+        else:
+            raise ValueError(f"Location tuple must have at least 2 elements, got {len(location)}")
+    else:
+        loc_x, loc_y = int(location[0]), int(location[1])
+
+    # Convert Direction enum to int if necessary
+    if isinstance(direction, Direction):
+        direction = int(direction)
+
+    # Create coordinate grids for the map
+    y_grid, x_grid = np.mgrid[0:size, 0:size]
+
+    # Vectorized coordinate transformation
+    new_x = x_grid - loc_x + center
+    new_y = y_grid - loc_y + center
+
+    # Create mask for valid coordinates
+    valid_mask = (new_x >= 0) & (new_x < tensor_size) & (new_y >= 0) & (new_y < tensor_size)
+
+    # Initialize tensor with zeros (12 channels)
+    tensor = torch.zeros((12, tensor_size, tensor_size), dtype=torch.float32)
+
+    # Use advanced indexing to set values where valid
+    if np.any(valid_mask):
+        valid_y = new_y[valid_mask]
+        valid_x = new_x[valid_mask]
+
+        # Copy the 10 channels from unpacked_map
+        for channel in range(10):
+            tensor[channel, valid_y, valid_x] = torch.from_numpy(
+                unpacked_map[channel][valid_mask].astype(np.float32)
+            )
+
+        # Channel 10: time since update
+        tensor[10, valid_y, valid_x] = torch.from_numpy(
+            (time_since_update[valid_mask] / 100.0).astype(np.float32)
+        )
+
+    # Channel 11: step (fill entire channel)
+    tensor[11, :, :] = step_num / 100.0
+
+    # Handle direction rotation
+    # Rotate wall channels based on direction
+    for turn in range(direction):
+        # Rotate wall bits: left_bit, bottom_bit, right_bit, top_bit = top_bit, left_bit, bottom_bit, right_bit
+        tensor[1], tensor[2], tensor[3], tensor[0] = tensor[0], tensor[1], tensor[2], tensor[3]
+
+    # Rotate the entire tensor based on the agent's direction
+    if direction == 1:  # down - rotate 90° counter-clockwise
+        tensor = torch.rot90(tensor, k=1, dims=[1, 2])
+    elif direction == 2:  # left - rotate 180°
+        tensor = torch.rot90(tensor, k=2, dims=[1, 2])
+    elif direction == 3:  # up - rotate 90° clockwise
+        tensor = torch.rot90(tensor, k=3, dims=[1, 2])
+    # direction 0 (right) - no rotation needed
+
+    return tensor
+
 
 def tiles_to_tensor(
     tiles: list[list[Tile]],

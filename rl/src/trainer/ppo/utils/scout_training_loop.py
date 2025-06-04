@@ -1,25 +1,29 @@
 import random
 
 import torch
+from tensordict.tensordict import TensorDict
 import numpy as np
 from tqdm import tqdm
 
 from .model_utils import save_checkpoint
 from .ppo_update import ppo_update, RewardScaling
+from .buffer import PPOExperienceBuffer
 
 from grid.utils import Point, Direction, Action
 from grid.map import tiles_to_tensor, map_to_tiles
 from grid.node import DirectionalNode
 
+from utils.state import StateManager
+
 from til_environment.types import RewardNames
 
 
-def train_scout_episode(
+def run_episode(
     env,
     model,
     optimizer,
     scheduler,
-    buffer,
+    buffer: PPOExperienceBuffer,
     args,
     device,
     seed = None
@@ -49,7 +53,7 @@ def train_scout_episode(
     env.set_num_active_guards(num_guards)
     env.reset(seed=seed)
 
-    last_scout_step_info = None  # Clear previous step
+    previous_experience = None  # Clear previous step
     model.to(device)
 
     scout_reward = 0
@@ -58,83 +62,59 @@ def train_scout_episode(
 
     done = False
 
-    global_maps = []
+    local_state_manager = StateManager(
+        n_frames=args.temporal_frames if args.temporal_state else None,
+        use_mapped_viewcone=args.mapped_viewcone
+    )
+    global_state_manager = StateManager(
+        n_frames=args.temporal_frames if args.temporal_state else None,
+        use_mapped_viewcone=args.mapped_viewcone
+    )
 
-    # Inner loop for one episode
     while not done:
-        # Get observation, reward, etc. for the current agent's turn
         observation, reward, termination, truncation, info = env.last()
 
         done = termination or truncation
+
         if termination:
             reward = env.rewards[env.scout]
 
         scout_reward += reward
 
+        if previous_experience is not None:
+            previous_experience['reward'] = reward
+
         # Check if the current agent is done
         if done:
             # If the scout had an unfinished step when the episode ended,
             # finalize it with the final reward/done
-            if last_scout_step_info is not None:
+            if previous_experience is not None:
                 buffer.add(
-                    actor_input=last_scout_step_info['actor_input'],
-                    critic_input=last_scout_step_info['critic_input'],
-                    action=last_scout_step_info['action'],
-                    log_prob=last_scout_step_info['log_prob'],
-                    value=last_scout_step_info['value'],
-                    reward=reward,
-                    done=True  # Episode ended
+                    previous_experience,
+                    done=True
                 )
-                last_scout_step_info = None
+                previous_experience = None
 
             break  # End episode
         else:
             previous_action = None
-            if last_scout_step_info is not None:
-                previous_action = last_scout_step_info['action']
-                # S_{t-1}, A_{t-1}, log_prob_{t-1}, V_{t-1} are in last_scout_step_info
-                # R_{t-1}, done_{t-1} are available now from env.last()
+            if previous_experience is not None:
+                previous_action = previous_experience['action'].item()
+
                 buffer.add(
-                    actor_input=last_scout_step_info['actor_input'],
-                    critic_input=last_scout_step_info['critic_input'],
-                    action=last_scout_step_info['action'],
-                    log_prob=last_scout_step_info['log_prob'],
-                    value=last_scout_step_info['value'],
-                    reward=reward,  # Reward for the step that ended just before this turn
-                    done=termination or truncation  # Done for the step that ended just before this turn
+                    previous_experience,
+                    done=False
                 )
-                last_scout_step_info = None  # Clear as step is finalized
+                previous_experience = None
+
+        env.maps[env.scout](observation)
 
         location = observation["location"]
         position = Point(int(location[0]), int(location[1]))
         direction = Direction(observation["direction"])
-        env.maps[env.scout](observation)
 
-        if args.temporal_state:
-            map_state = env.maps[env.scout].get_tensor(args.temporal_frames).unsqueeze(0)
-        else:
-            map_state = env.maps[env.scout].get_tensor(args.temporal_frames).unsqueeze(0)
-
-        global_maps.append(env.state().transpose())
-
-        if args.temporal_state:
-            output = torch.zeros((12, args.temporal_frames, 31, 31))
-
-            for i, map in enumerate(global_maps[:args.temporal_frames]):
-                tens = tiles_to_tensor(
-                    map_to_tiles(map),
-                    location,
-                    direction,
-                    16,
-                    np.zeros((16, 16)),
-                    env.maps[env.scout].step_counter - i
-                )
-
-                output[:, -i-1] = tens
-
-            global_state = output.unsqueeze(0)
-        else:
-            global_state = tiles_to_tensor(
+        if args.mapped_viewcone:
+            global_map = tiles_to_tensor(
                 map_to_tiles(env.state().transpose()),
                 location,
                 direction,
@@ -143,15 +123,15 @@ def train_scout_episode(
                 env.maps[env.scout].step_counter
             ).unsqueeze(0)
 
-        node: DirectionalNode = env.maps[env.scout].get_node(position, direction)
-        valid_actions = set(node.children.keys())
-
-        actor_input = map_state
-
-        if args.global_critic:
-            critic_input = global_state
+            local_state_manager.update(observation, env.maps[env.scout].get_tensor())
+            global_state_manager.update(observation, global_map) # convert [x, y] to [y, x]
         else:
-            critic_input = map_state
+
+            local_state_manager.update(observation, env.maps[env.scout].map)
+            global_state_manager.update(observation, env.state().transpose()) # convert [x, y] to [y, x]
+
+        actor_input = local_state_manager[-1]
+        critic_input = global_state_manager[-1] if args.global_critic else actor_input
 
         # Ensure tensor dtype matches model dtype (bfloat16 if enabled)
         if args.bfloat16:
@@ -161,11 +141,12 @@ def train_scout_episode(
         actor_input = actor_input.to(device)
         critic_input = critic_input.to(device)
 
-        # Get action (A_t), log_prob, value (V(S_t)) from the model
-        action = None
-
         max_retries = 3
         tries = 0
+
+        node: DirectionalNode = env.maps[env.scout].get_node(position, direction)
+        valid_actions = set(node.children.keys())
+        action = None
 
         while action is None or (
             action == previous_action
@@ -177,16 +158,20 @@ def train_scout_episode(
         ):
             with torch.no_grad():
 
-                action, log_prob, entropy, value = model.get_action_and_value(actor_input, critic_input, deterministic=False)
+                action, log_prob, entropy, value = model.get_action_and_value(
+                    actor_input.unsqueeze(0),
+                    critic_input.unsqueeze(0),
+                    deterministic=False
+                )
 
             # Store info for this step to be finalized in the next scout turn
-            last_scout_step_info = {
+            previous_experience = TensorDict({
                 'actor_input': actor_input,
                 'critic_input': critic_input,
-                'action': action.item(),
-                'log_prob': log_prob.item(),
-                'value': value.item(),
-            }
+                'action': action.squeeze(),
+                'log_prob': log_prob.squeeze(),
+                'value': value.squeeze(),
+            })
 
             action = action.item()
 
@@ -223,7 +208,7 @@ def update_model(buffer, model, optimizer, scheduler, reward_scaler, args, devic
     # Get batch from buffer
     training_data = buffer.get_batch()
 
-    assert training_data, "Buffer empty? This shouldn't happen."
+    assert len(training_data), "Buffer empty? This shouldn't happen."
 
     # Move training data to device
     for k, v in training_data.items():
@@ -239,7 +224,7 @@ def update_model(buffer, model, optimizer, scheduler, reward_scaler, args, devic
 
     return update_losses
 
-def evaluate_scout(env, model, args, device, seed):
+def evaluate(env, model, args, device, seed):
     """
     Evaluate the model over multiple episodes without training
 
@@ -285,7 +270,14 @@ def evaluate_scout(env, model, args, device, seed):
         previous_action = None
         done = False
 
-        global_maps = []  # Track global maps like in training
+        local_state_manager = StateManager(
+            n_frames=args.temporal_frames if args.temporal_state else None,
+            use_mapped_viewcone=args.mapped_viewcone
+        )
+        global_state_manager = StateManager(
+            n_frames=args.temporal_frames if args.temporal_state else None,
+            use_mapped_viewcone=args.mapped_viewcone
+        )
 
         # Run one episode
         while not done:
@@ -317,33 +309,8 @@ def evaluate_scout(env, model, args, device, seed):
 
             env.maps[env.scout](observation)
 
-            # Get map state (align with training logic)
-            if args.temporal_state:
-                map_state = env.maps[env.scout].get_tensor(args.temporal_frames).unsqueeze(0)
-            else:
-                map_state = env.maps[env.scout].get_tensor(args.temporal_frames).unsqueeze(0)
-
-            global_maps.append(env.state().transpose())
-
-            # Generate global state (align with training logic)
-            if args.temporal_state:
-                output = torch.zeros((12, args.temporal_frames, 31, 31))
-
-                for i, map in enumerate(global_maps[:args.temporal_frames]):
-                    tens = tiles_to_tensor(
-                        map_to_tiles(map),
-                        location,
-                        direction,
-                        16,
-                        np.zeros((16, 16)),
-                        env.maps[env.scout].step_counter - i
-                    )
-
-                    output[:, -i-1] = tens
-
-                global_state = output.unsqueeze(0)
-            else:
-                global_state = tiles_to_tensor(
+            if args.mapped_viewcone:
+                global_map = tiles_to_tensor(
                     map_to_tiles(env.state().transpose()),
                     location,
                     direction,
@@ -352,15 +319,20 @@ def evaluate_scout(env, model, args, device, seed):
                     env.maps[env.scout].step_counter
                 ).unsqueeze(0)
 
+                local_state_manager.update(observation, env.maps[env.scout].get_tensor())
+                global_state_manager.update(observation, global_map) # convert [x, y] to [y, x]
+            else:
+
+                local_state_manager.update(observation, env.maps[env.scout].map)
+                global_state_manager.update(observation, env.state().transpose()) # convert [x, y] to [y, x]
+
             node: DirectionalNode = env.maps[env.scout].get_node(position, direction)
             valid_actions = set(node.children.keys())
 
-            actor_input = map_state
-
-            if args.global_critic:
-                critic_input = global_state
-            else:
-                critic_input = map_state
+            actor_input = local_state_manager[-1]
+            critic_input = global_state_manager[-1] if args.global_critic else actor_input
+            actor_input = actor_input.unsqueeze(0)
+            critic_input = critic_input.unsqueeze(0)
 
             # Ensure tensor dtype matches model dtype (bfloat16 if enabled)
             if args.bfloat16:
@@ -464,7 +436,7 @@ def evaluate_scout(env, model, args, device, seed):
         "rewards_by_type": avg_rewards_by_type
     }
 
-def train_scout(env, model, optimizer, scheduler, buffer, args):
+def train(env, model, optimizer, scheduler, buffer, args):
     """
     Main training loop
 
@@ -500,7 +472,7 @@ def train_scout(env, model, optimizer, scheduler, buffer, args):
     while timesteps_elapsed < args.timesteps:
 
         for e in tqdm(range(args.episodes_per_update), desc="Collecting episodes"):
-            steps_elapsed, rewards = train_scout_episode(
+            steps_elapsed, rewards = run_episode(
                 env,
                 model,
                 optimizer,
@@ -520,7 +492,7 @@ def train_scout(env, model, optimizer, scheduler, buffer, args):
 
         if steps_since_eval >= args.eval_interval:
             steps_since_eval = 0
-            evaluate_scout(env, model, args, device, args.seed + timesteps_elapsed + 10000)
+            evaluate(env, model, args, device, args.seed + timesteps_elapsed + 10000)
 
         # Perform PPO update if enough episodes have been collected
         if not buffer.is_empty() and episodes_since_update >= args.episodes_per_update:
