@@ -185,7 +185,7 @@ class TrajectoryTree:
                 self.registry,
             )
 
-            # print(f"Fit {len(self.trajectories)} trajectories to visited points.")
+            print(f"Fit {len(self.trajectories)} trajectories to visited points.")
 
             self.trajectories = fast_forward_trajectories(
                 self.trajectories,
@@ -193,6 +193,8 @@ class TrajectoryTree:
                 self.temporal_constraints,
                 self.registry
             )
+
+            print(f"Created {len(self.trajectories)} current trajectories.")
 
             self.edge_trajectories = self.trajectories.copy()
 
@@ -523,7 +525,7 @@ class TrajectoryTree:
         removed_trajectories = set(self.trajectories) - set(valid_trajectories)
         for traj in removed_trajectories:
             traj.prune()
-            # self._unregister_trajectory_from_index(traj)
+            self._unregister_trajectory_from_index(traj)
 
         self._destroy_trajectory_families()
         self.trajectories = valid_trajectories

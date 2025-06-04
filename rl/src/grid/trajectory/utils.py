@@ -63,7 +63,7 @@ def get_initial_candidates(
     trajectories: list[Trajectory],
     step: int,
     budget: int,
-    registry: Optional[Any] = None
+    registry: Optional[NodeRegistry] = None
 ) -> list[Trajectory]:
     """Get initial trajectory candidates for the given step."""
     candidates = [traj for traj in trajectories if traj.created_at == step]

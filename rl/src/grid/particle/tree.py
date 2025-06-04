@@ -11,9 +11,9 @@ from .constraints import ParticleConstraints, TemporalConstraints
 
 
 class ConstraintPreference:
-    HARD_PENALTY = 0.1           # Multiplier for breaking hard constraint
-    ROUTE_EXCLUDE_PENALTY = 0.5  # Multiplier for being at excluded route position
-    ROUTE_INCLUDE_BOOST = 1.5    # Multiplier for being at required route position
+    HARD_PENALTY = 0.01           # Multiplier for breaking hard constraint
+    ROUTE_EXCLUDE_PENALTY = 0.2  # Multiplier for being at excluded route position
+    ROUTE_INCLUDE_BOOST = 2.0    # Multiplier for being at required route position
 
 
 class ParticleTree:
@@ -29,6 +29,7 @@ class ParticleTree:
         self.map = map
         self.min_total_particles = min_total_particles
         self.size = size
+        self.restart_frequency = 2
 
         self.last_seen_step = 0
         self.num_step = 0
@@ -66,21 +67,23 @@ class ParticleTree:
     def step(self):
         self.num_step += 1
 
-        particles = {root: NodeParticles(1, 1, root) for root in self.roots}
-        particles = resample_particles(particles, min_total_particles=self.min_total_particles)
+        if self.num_step % self.restart_frequency == 0:
 
-        for step in range(self.last_seen_step, self.num_step):
-            particles = propagate_particles(particles)
-            particles = apply_particle_reweigh(
-                particles,
-                self.temporal_constraints.hard_constraints[step],
-                self.temporal_constraints.soft_constraints[step],
-            )
+            particles = {root: NodeParticles(1, 1, root) for root in self.roots}
             particles = resample_particles(particles, min_total_particles=self.min_total_particles)
 
-        self.particles = particles
+            for step in range(self.last_seen_step, self.num_step):
+                particles = propagate_particles(particles)
+                particles = apply_particle_reweigh(
+                    particles,
+                    self.temporal_constraints.hard_constraints[step],
+                    self.temporal_constraints.soft_constraints[step],
+                )
+                particles = resample_particles(particles, min_total_particles=self.min_total_particles)
 
-        self.resample()
+            self.particles = particles
+
+            self.resample()
 
     def prune(self, information: list[tuple[Point, Tile]]):
         """
@@ -332,6 +335,9 @@ def apply_particle_reweigh(
         if hard_constraints.route.contains and not hard_constraints.route.contains.issubset(visited_positions):
             node_particles.individual_probability *= ConstraintPreference.HARD_PENALTY
 
+        if hard_constraints.route.contains:
+            node_particles.individual_probability *= compute_likelihood(node_particles, hard_constraints) / node_particles.count
+
         # Route excludes: Decrease probability if particle is at excluded route position
         if current_position in soft_constraints.route.excludes:
             node_particles.individual_probability *= ConstraintPreference.ROUTE_EXCLUDE_PENALTY
@@ -345,3 +351,28 @@ def apply_particle_reweigh(
             updated_particles[node] = node_particles
 
     return updated_particles
+
+def compute_likelihood(
+    node_particles: NodeParticles,
+    hard_constraints: ParticleConstraints,
+):
+    previous_visit_counts = node_particles.previous_visit_counts
+    previous_visit_probas = node_particles.previous_visit_probas
+
+    log_likelihood = 0.
+
+    for pos in previous_visit_counts.nonzero():
+        visit_proba = previous_visit_probas[pos.x, pos.y]
+
+        if pos in hard_constraints.route.contains:
+            log_likelihood += np.log(visit_proba + 1e-10)
+        # else:
+        #     log_likelihood += np.log(1 - visit_proba + 1e-10)
+
+    # print(node_particles.node)
+    # print({pos: previous_visit_probas[pos.x, pos.y].item() for pos in previous_visit_counts.nonzero()})
+    # print(hard_constraints.route.contains)
+    # print(np.exp(log_likelihood))
+    # print("\n")
+
+    return np.exp(log_likelihood)
