@@ -4,7 +4,6 @@ fastapi==0.115.12
 uvicorn[standard]==0.34.2
 
 numpy>=1.22.0
-cuda-python>=12.3
 
 noisereduce==3.0.0
 

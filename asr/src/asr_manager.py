@@ -17,13 +17,20 @@ class ASRManager:
         self.use_spellchecker = False
         self.use_noise_reduction = False
         
+        print(f"CUDA Version: {torch.version.cuda}")
+        
         self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         
         model_name = "parakeet-tdt-0.6b-v2"
         print(f"Loading ASR model '{model_name}'")
         # self.asr_model = nemo_asr.models.ASRModel.from_pretrained(model_name)
-        self.asr_model = nemo_asr.models.ASRModel.restore_from(f"./models/{model_name}/{model_name}.nemo")
+        # self.asr_model = nemo_asr.models.ASRModel.restore_from(f"./models/{model_name}/{model_name}.nemo")
+        self.asr_model = nemo_asr.models.ASRModel.restore_from(f"./{model_name}.nemo")
         self.asr_model.half().cuda()
+        
+        # cudagraph warmup?
+        x=torch.empty([32, 32]).cuda()
+        torch.matmul(x,x)
         
         self.gate = TG(sr=16000, nonstationary=True).half().cuda()
 
@@ -34,10 +41,6 @@ class ASRManager:
         self.reranker.word_frequency.load_json("word_frequency.json")
         self.levenshtein.add_from_path("words.txt")
         self.spellcheck_cache: dict[str, str] = {}
-
-        # self.asr_model.cfg.decoding.greedy.max_symbols = 5
-        # self.asr_model.cfg.decoding.beam.beam_size = 1
-        # self.asr_model.cfg.decoding.durations = [0, 1, 2]
 
     def asr(self, encoded: list[bytes]) -> list[str]:
         """Performs ASR transcription on a batch of audio files.
@@ -82,7 +85,8 @@ class ASRManager:
                 # Extract the text from each transcription
                 for transcription in batch_transcriptions:
                     if transcription and hasattr(transcription, 'text'):
-                        text = " ".join([self._spellcheck(word) for word in transcription.text.split(" ")])
+                        # text = " ".join([self._spellcheck(word) for word in transcription.text.split(" ")])
+                        text = " ".join([word for word in transcription.text.split(" ")]) # do not use spell check
                         transcriptions.append(text)
                     else:
                         transcriptions.append("i am steve")
