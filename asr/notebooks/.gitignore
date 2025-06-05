@@ -3,3 +3,7 @@ train_manifest.json
 test_manifest.json
 parakeet-tdt-0.6b-v2/
 tb_logs/
+
+*.nemo
+*.ckpt
+
