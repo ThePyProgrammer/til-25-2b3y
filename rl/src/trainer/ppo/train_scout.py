@@ -22,13 +22,13 @@ from networks.v2.ppo import (
     DiscretePolicyConfig,
     ValueNetworkConfig
 )
-from networks.v3.encoder import StateEncoderConfig
+from networks.v3.encoder import StateEncoderConfig, RecurrentMapStateEncoderConfig
 from networks.v3.utils import initialize_model as v3_init_model
 from networks.v2.encoder import MapEncoderConfig, TemporalMapEncoderConfig
 from networks.v2.utils import initialize_model as v2_init_model
 
 from utils import count_parameters
-from utils.wrapper import ScoutWrapper, CustomRewardsWrapper, CustomStateWrapper, TimeoutResetWrapper
+from utils.wrapper import ScoutWrapper, CustomRewardsWrapper, CustomStateWrapper
 
 from til_environment import gridworld
 
@@ -53,7 +53,7 @@ def main(args):
     set_seeds(args.seed)
 
     env = gridworld.env(
-        env_wrappers=[TimeoutResetWrapper, CustomStateWrapper, ScoutWrapper],
+        env_wrappers=[CustomStateWrapper, ScoutWrapper],
         render_mode="human" if args.render else None,  # Render the map if requested
         debug=False,  # Enable debug mode
         novice=False,  # Use same map layout every time (for Novice teams only)
@@ -65,7 +65,7 @@ def main(args):
     env.reset(seed=args.seed)
 
     # Extract observation shape information
-    CHANNELS, MAP_SIZE, ACTION_DIM = 12, 31, 4
+    CHANNELS, MAP_SIZE, ACTION_DIM = 12, 31, 5
     print(f"Detected Map size: {MAP_SIZE}, Channels: {CHANNELS}, Action Dim: {ACTION_DIM}")
 
     if not args.mapped_viewcone:
@@ -94,7 +94,7 @@ def main(args):
             "cuda"
         )
     else:
-        encoder_config = MapEncoderConfig(
+        map_encoder_config = MapEncoderConfig(
             map_size = 16,
             channels = 12,
             output_dim = 64,
@@ -102,21 +102,46 @@ def main(args):
             kernel_sizes = [7, 3, 3, 3],
             strides = [1, 1, 1, 1],
             use_batch_norm = True,
-            dropout_rate = 0.1,
-            use_layer_norm = False,
+            dropout_rate = 0,
+            use_layer_norm = True,
             use_center_only = True,
         )
 
-        actor_config = DiscretePolicyConfig(
-            input_dim=80,
-            action_dim=ACTION_DIM,
-            hidden_dims=[128, 128, 128]
-        )
+        if args.temporal_state:
+            assert args.temporal_frames
 
-        critic_config = ValueNetworkConfig(
-            input_dim=80,
-            hidden_dims=[128, 128, 128]
-        )
+            encoder_config = RecurrentMapStateEncoderConfig(
+                recurrent_type="lstm",
+                hidden_dim=128,
+                num_layers=3,
+                dropout=0,
+                map_encoder_config=map_encoder_config
+            )
+
+            actor_config = DiscretePolicyConfig(
+                input_dim=128,
+                action_dim=ACTION_DIM,
+                hidden_dims=[128, 128, 128]
+            )
+
+            critic_config = ValueNetworkConfig(
+                input_dim=128,
+                hidden_dims=[128, 128, 128]
+            )
+
+        else:
+            encoder_config = map_encoder_config
+
+            actor_config = DiscretePolicyConfig(
+                input_dim=80,
+                action_dim=ACTION_DIM,
+                hidden_dims=[128, 128, 128]
+            )
+
+            critic_config = ValueNetworkConfig(
+                input_dim=80,
+                hidden_dims=[128, 128, 128]
+            )
 
         model = v3_init_model(
             encoder_config,

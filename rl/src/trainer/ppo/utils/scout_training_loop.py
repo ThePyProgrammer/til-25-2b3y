@@ -121,7 +121,7 @@ def run_episode(
                 16,
                 np.zeros((16, 16)),
                 env.maps[env.scout].step_counter
-            ).unsqueeze(0)
+            )
 
             local_state_manager.update(observation, env.maps[env.scout].get_tensor())
             global_state_manager.update(observation, global_map) # convert [x, y] to [y, x]
@@ -317,7 +317,7 @@ def evaluate(env, model, args, device, seed):
                     16,
                     np.zeros((16, 16)),
                     env.maps[env.scout].step_counter
-                ).unsqueeze(0)
+                )
 
                 local_state_manager.update(observation, env.maps[env.scout].get_tensor())
                 global_state_manager.update(observation, global_map) # convert [x, y] to [y, x]

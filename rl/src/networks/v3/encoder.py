@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Literal
 
 import torch
 import torch.nn as nn
@@ -167,3 +168,119 @@ class MapStateEncoder(nn.Module):
         )
 
         return embedding
+
+
+@dataclass
+class RecurrentMapStateEncoderConfig:
+    map_encoder_config: MapEncoderConfig = field(default_factory=MapEncoderConfig)
+    recurrent_type: Literal["gru", "lstm", "rnn"] = "gru"  # "gru", "lstm", or "rnn"
+    hidden_dim: int = 128
+    num_layers: int = 1
+    dropout: float = 0.0
+
+class RecurrentMapStateEncoder(nn.Module):
+    def __init__(self, config: RecurrentMapStateEncoderConfig):
+        super().__init__()
+
+        self.config = config
+
+        self.map_encoder = V2MapEncoder(config.map_encoder_config)
+
+        self.info_encoder = nn.Sequential(
+            nn.Linear(4, 16),
+            nn.ReLU(),
+            nn.Linear(16, 16),
+            nn.ReLU(),
+        )
+
+        dummy_map_input = torch.zeros(1, 1, 12, 31, 31)  # Assuming typical map dimensions
+        dummy_info_input = torch.zeros(1, 1, 4)
+
+        with torch.no_grad():
+            dummy_map_out = self.map_encoder(dummy_map_input.squeeze(1))
+            dummy_info_out = self.info_encoder(dummy_info_input.squeeze(1))
+            combined_dim = dummy_map_out.shape[-1] + dummy_info_out.shape[-1]
+
+        recurrent_kwargs = {
+            "input_size": combined_dim,
+            "hidden_size": config.hidden_dim,
+            "num_layers": config.num_layers,
+            "dropout": config.dropout if config.num_layers > 1 else 0,
+            "bidirectional": False,
+            "batch_first": True
+        }
+
+        recurrent_type = config.recurrent_type.lower()
+
+        if recurrent_type == "gru":
+            recurrent_cls = nn.GRU
+        elif recurrent_type == "lstm":
+            recurrent_cls = nn.LSTM
+        elif recurrent_type == "rnn":
+            recurrent_cls = nn.RNN
+        else:
+            raise ValueError(f"Unsupported recurrent type: {config.recurrent_type}")
+
+        self.recurrent = recurrent_cls(**recurrent_kwargs)
+
+    def forward(
+        self,
+        state: TensorDict,
+        hidden=None,
+        return_hidden: bool = False
+    ):
+        """
+        Args:
+            state (TensorDict):
+                {
+                    "map": (batch_size, seq_len, channels, height, width),
+                    "location": (batch_size, seq_len, 2),
+                    "direction": (batch_size, seq_len, 1),
+                    "step": (batch_size, seq_len, 1)
+                }
+            hidden: Optional hidden state for recurrent layer
+
+        Returns:
+            output: (batch_size, seq_len, hidden_dim * num_directions)
+            hidden: Updated hidden state
+        """
+        b, s, c, h, w = state['map'].shape
+
+        # Reshape to process all timesteps at once
+        map_reshaped = state['map'].reshape(b * s, c, h, w)
+
+        info = torch.cat(
+            [
+                state['location'],
+                state['direction'],
+                state['step'],
+            ],
+            dim=-1
+        )
+        info_reshaped = info.reshape(b * s, -1)
+
+        # Process through encoders
+        info_embedding = self.info_encoder(info_reshaped)  # (b*s, 16)
+        map_embedding = self.map_encoder(map_reshaped)  # (b*s, map_embed_dim)
+
+        # Combine embeddings
+        combined_embedding = torch.cat(
+            [
+                info_embedding,
+                map_embedding
+            ],
+            dim=-1
+        )  # (b*s, combined_dim)
+
+        # Reshape back to sequence format
+        combined_embedding = combined_embedding.reshape(b, s, -1)  # (b, s, combined_dim)
+
+        seq_len = state['seq_len'].cpu().long()
+        packed_input = nn.utils.rnn.pack_padded_sequence(combined_embedding, seq_len, batch_first=True, enforce_sorted=False)
+
+        # Pass through recurrent layer
+        packed_output, hidden_new = self.recurrent(packed_input, hidden)
+
+        output, _ = nn.utils.rnn.pad_packed_sequence(packed_output, batch_first=True)
+
+        return output[torch.arange(b), seq_len-1].squeeze(1)

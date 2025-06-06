@@ -95,19 +95,43 @@ class StateManager:
             map (NDArray[np.uint8] | torch.Tensor): either the reconstructed or the ground truth map.
         """
         self.observations.append(observation)
-        self.maps.append(map)
+        self.maps.append(map) # type: ignore
 
     def __getitem__(self, idx: int) -> TensorDict:
         if self.use_mapped_viewcone:
-            observation = self.observations[idx]
-            map = self.maps[idx]
+            if self.n_frames is None:
+                observation = self.observations[idx]
+                map = self.maps[idx]
 
-            return TensorDict({
-                "map": map,
-                "location": torch.from_numpy(observation['location']),
-                "direction": torch.tensor(observation['direction']),
-                "step": torch.tensor(observation['step'] / 100)
-            })
+                return TensorDict({
+                    "map": map,
+                    "location": torch.from_numpy(observation['location']),
+                    "direction": torch.tensor(observation['direction']),
+                    "step": torch.tensor(observation['step'] / 100)
+                })
+            else:
+                maps = torch.zeros((self.n_frames, 12, 31, 31))
+                locations = torch.zeros((self.n_frames, 2))
+                directions = torch.zeros((self.n_frames, 1))
+                steps = torch.zeros((self.n_frames, 1))
+
+                n_available = min(len(self.maps), self.n_frames)
+                maps[:n_available] = torch.stack(self.maps[-n_available:]) # type: ignore
+
+                recent_observations = self.observations[-n_available:]
+
+                for i, observation in enumerate(recent_observations):
+                    locations[i] = torch.from_numpy(observation['location'])
+                    directions[i] = observation['direction']
+                    steps[i] = observation['step']
+
+                return TensorDict({
+                    "map": maps,
+                    "location": locations,
+                    "direction": directions,
+                    "step": steps,
+                    "seq_len": n_available
+                })
 
         else:
             observation = self.observations[idx]
