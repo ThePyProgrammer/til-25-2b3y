@@ -13,7 +13,7 @@ class ConvBlock(nn.Module):
         stride: int = 1,
         padding: int = 1,
         use_batch_norm: bool = False,
-        activation = nn.ReLU
+        activation = nn.Tanh
     ):
         super().__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)

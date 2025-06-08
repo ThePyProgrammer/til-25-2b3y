@@ -166,10 +166,13 @@ def ppo_update(
 
             # Clipped Value Loss
             # Clip the new value estimate if it's too far from the old one
-            values_clipped = mb['value'] + torch.clamp(values_new - mb['value'], -args.clip_eps, args.clip_eps)
-            value_loss_unclipped = F.mse_loss(values_new, mb['return'])
-            value_loss_clipped = F.mse_loss(values_clipped, mb['return'])
-            value_loss = torch.max(value_loss_unclipped, value_loss_clipped) # Use the maximum of clipped and unclipped loss
+            # values_clipped = mb['value'] + torch.clamp(values_new - mb['value'], -args.clip_eps, args.clip_eps)
+            # value_loss_unclipped = F.mse_loss(values_new, mb['return'])
+            # value_loss_clipped = F.mse_loss(values_clipped, mb['return'])
+            # value_loss = torch.max(value_loss_unclipped, value_loss_clipped) # Use the maximum of clipped and unclipped loss
+
+            # Unclipped Value Loss
+            value_loss = F.mse_loss(values_new, mb['return'])
 
             # Entropy Bonus
             entropy_bonus = entropy.mean() # Maximize entropy, so add negative entropy to loss

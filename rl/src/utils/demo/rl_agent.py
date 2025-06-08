@@ -16,7 +16,7 @@ from grid.node import DirectionalNode
 from networks.v1.ppo import PPOActorCritic
 
 # Constants for the scout model
-CHANNELS, MAP_SIZE, ACTION_DIM = 12, 31, 5
+CHANNELS, MAP_SIZE, ACTION_DIM = 10, 31, 5
 
 class RLScoutAgent:
     """Integration with trained RL model for scout agent behavior."""

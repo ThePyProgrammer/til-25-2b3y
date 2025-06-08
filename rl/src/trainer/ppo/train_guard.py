@@ -57,7 +57,7 @@ def main(args):
     env.reset(seed=args.seed)
 
     # Extract observation shape information
-    CHANNELS, MAP_SIZE, ACTION_DIM = 12, 31, 5
+    CHANNELS, MAP_SIZE, ACTION_DIM = 10, 31, 5
     print(f"Detected Map size: {MAP_SIZE}, Channels: {CHANNELS}, Action Dim: {ACTION_DIM}")
 
     # Initialize model

@@ -38,9 +38,9 @@ REWARDS_DICT = {
     RewardNames.SCOUT_CAPTURED: -10,
     RewardNames.SCOUT_RECON: 0.2,
     RewardNames.SCOUT_MISSION: 1,
-    # RewardNames.WALL_COLLISION: -0.2,
+    RewardNames.WALL_COLLISION: -0.1,
     # RewardNames.SCOUT_TRUNCATION: 2.5,
-    # RewardNames.STATIONARY_PENALTY: -0.2,
+    RewardNames.STATIONARY_PENALTY: -0.1,
     # RewardNames.SCOUT_STEP: 0.2
 }
 
@@ -53,7 +53,7 @@ def main(args):
     set_seeds(args.seed)
 
     env = gridworld.env(
-        env_wrappers=[CustomStateWrapper, ScoutWrapper],
+        env_wrappers=[CustomStateWrapper, CustomRewardsWrapper, ScoutWrapper],
         render_mode="human" if args.render else None,  # Render the map if requested
         debug=False,  # Enable debug mode
         novice=False,  # Use same map layout every time (for Novice teams only)
@@ -65,7 +65,7 @@ def main(args):
     env.reset(seed=args.seed)
 
     # Extract observation shape information
-    CHANNELS, MAP_SIZE, ACTION_DIM = 12, 31, 5
+    CHANNELS, MAP_SIZE, ACTION_DIM = 10, 31, 5
     print(f"Detected Map size: {MAP_SIZE}, Channels: {CHANNELS}, Action Dim: {ACTION_DIM}")
 
     if not args.mapped_viewcone:
@@ -96,12 +96,12 @@ def main(args):
     else:
         map_encoder_config = MapEncoderConfig(
             map_size = 16,
-            channels = 12,
+            channels = 10,
             output_dim = 64,
             conv_layers = [64, 64, 64, 64],
             kernel_sizes = [7, 3, 3, 3],
             strides = [1, 1, 1, 1],
-            use_batch_norm = True,
+            use_batch_norm = False,
             dropout_rate = 0,
             use_layer_norm = True,
             use_center_only = True,

@@ -7,7 +7,7 @@ from ..layers import ConvBlock, Conv3DBlock
 class MapEncoderConfig:
     """Configuration for map encoders."""
     map_size: int = 16
-    channels: int = 12
+    channels: int = 10
     output_dim: int = 64
     conv_layers: list[int] = field(default_factory=lambda: [32, 32, 32, 32])
     kernel_sizes: list[int] = field(default_factory=lambda: [3, 3, 3, 3])
@@ -107,7 +107,7 @@ class MapEncoder(nn.Module):
 class TemporalMapEncoderConfig:
     """Configuration for temporal map encoders."""
     map_size: int = 16
-    channels: int = 12
+    channels: int = 10
     output_dim: int = 32
 
     # Spatial-only 3D convolution parameters (preserving temporal dimension)

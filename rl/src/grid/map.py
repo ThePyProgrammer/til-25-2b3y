@@ -19,6 +19,13 @@ from .particle import ParticleTree
 from utils.state import unpack_bits
 
 
+RECON_REWARD = 0.2
+MISSION_REWARD = 1
+MISSION_SPAWNRATE = 0.1
+
+TOTAL_REWARD = 16 * 16 * (MISSION_SPAWNRATE * MISSION_REWARD + (1 - MISSION_SPAWNRATE) * RECON_REWARD)
+
+
 def get_init_map_array(size):
     map = np.zeros((size, size), dtype=np.uint8)
 
@@ -427,23 +434,20 @@ class Map:
         The map is rotated so the agent is always facing right (direction 0).
 
         Args:
-            observation: Optional dictionary containing agent's current state.
-                         Should include 'location' and 'direction' keys.
+            frames (int): number of past frames to return
 
         Returns:
-            torch.Tensor: A tensor of shape (12, 31, 31) containing:
+            torch.Tensor: A tensor of shape (10, 31, 31) containing:
                 - Channel 0: vision (0/1)
-                - Channel 1: empty tiles (0/1)
-                - Channel 2: recon tiles (0/1)
-                - Channel 3: mission tiles (0/1)
-                - Channel 4: scout (0/1)
-                - Channel 5: guard (0/1)
-                - Channel 6: top_wall (0/1)
-                - Channel 7: bottom_wall (0/1)
-                - Channel 8: left_wall (0/1)
-                - Channel 9: right_wall (0/1)
-                - Channel 10: time_since_updated (0-1)
-                - Channel 11: step (0-1) normalised from 0-100 to 0-1
+                - Channel 1: reward (0-1)
+                - Channel 2: scout (0/1)
+                - Channel 3: guard (0/1)
+                - Channel 4: top_wall (0/1)
+                - Channel 5: bottom_wall (0/1)
+                - Channel 6: left_wall (0/1)
+                - Channel 7: right_wall (0/1)
+                - Channel 8: time_since_updated (0-1)
+                - Channel 9: step (0-1) normalised from 0-100 to 0-1
         """
         if frames is None:
             return tiles_to_tensor(
@@ -659,7 +663,6 @@ def tiles_to_tensor(
 
     # Extract all attributes at once using numpy array creation
     is_visible = np.array([tile.is_visible for tile in flat_tiles], dtype=bool).reshape(size, size)
-    is_empty = np.array([tile.is_empty for tile in flat_tiles], dtype=bool).reshape(size, size)
     is_recon = np.array([tile.is_recon for tile in flat_tiles], dtype=bool).reshape(size, size)
     is_mission = np.array([tile.is_mission for tile in flat_tiles], dtype=bool).reshape(size, size)
     has_scout = np.array([tile.has_scout for tile in flat_tiles], dtype=bool).reshape(size, size)
@@ -688,19 +691,26 @@ def tiles_to_tensor(
     # Create mask for valid coordinates
     valid_mask = (new_x >= 0) & (new_x < tensor_size) & (new_y >= 0) & (new_y < tensor_size)
 
-    # Initialize tensor with zeros (12 channels) using numpy for speed
-    tensor_np = np.zeros((12, tensor_size, tensor_size), dtype=np.float32)
+    # Initialize tensor with zeros (10 channels) using numpy for speed
+    tensor_np = np.zeros((10, tensor_size, tensor_size), dtype=np.float32)
 
     # Use advanced indexing to set values where valid
     valid_y = new_y[valid_mask]
     valid_x = new_x[valid_mask]
 
+    reward = is_recon * RECON_REWARD + is_mission * MISSION_REWARD
+    remaining_no_tiles = 16 * 16 - is_visible.sum()
+
+    if remaining_no_tiles != 0:
+        remaining_reward = TOTAL_REWARD - reward.sum()
+        remaining_reward_per_tile = remaining_reward / remaining_no_tiles
+
+        reward[is_visible == 0] = remaining_reward_per_tile
+
     # Stack all boolean arrays for efficient conversion
     bool_channels = np.stack([
         is_visible[valid_mask],
-        is_empty[valid_mask],
-        is_recon[valid_mask],
-        is_mission[valid_mask],
+        reward[valid_mask],
         has_scout[valid_mask],
         has_guard[valid_mask],
         has_top_wall[valid_mask],
@@ -710,13 +720,13 @@ def tiles_to_tensor(
     ], axis=0).astype(np.float32)
 
     # Set all boolean channels at once
-    tensor_np[0:10, valid_y, valid_x] = bool_channels
+    tensor_np[0:8, valid_y, valid_x] = bool_channels
 
     # Channel 10: time since update
-    tensor_np[10, valid_y, valid_x] = (time_since_update[valid_mask] / 100.0).astype(np.float32)
+    tensor_np[8, valid_y, valid_x] = (time_since_update[valid_mask] / 100.0).astype(np.float32)
 
     # Channel 11: step (fill entire channel)
-    tensor_np[11, :, :] = step_num / 100.0
+    tensor_np[9, :, :] = step_num / 100.0
 
     # Convert to torch tensor
     tensor = torch.from_numpy(tensor_np)
@@ -724,7 +734,7 @@ def tiles_to_tensor(
 
     for turn in range(direction):
         # left_bit, bottom_bit, right_bit, top_bit = top_bit, left_bit, bottom_bit, right_bit
-        tensor[8], tensor[7], tensor[9], tensor[6] = tensor[6], tensor[8], tensor[7], tensor[9]
+        tensor[6], tensor[5], tensor[7], tensor[4] = tensor[4], tensor[6], tensor[5], tensor[7]
 
     # Rotate the entire tensor based on the agent's direction
     if direction == 1:  # down - rotate 90° counter-clockwise

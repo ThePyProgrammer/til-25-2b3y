@@ -6,6 +6,23 @@ from numpy.typing import NDArray
 import torch
 from tensordict.tensordict import TensorDict
 
+from grid.utils import Action
+
+
+def encode_valid_actions(valid_actions: set[Action]) -> torch.Tensor:
+    """
+    Convert a set of valid actions to a one-hot encoded tensor.
+
+    Args:
+        valid_actions: Set of valid Action enums
+
+    Returns:
+        torch.Tensor: One-hot encoded tensor of shape (5,) where 1 indicates valid action
+    """
+    one_hot = torch.zeros(5, dtype=torch.float32)
+    actions = list(valid_actions)
+    one_hot[actions] = 1.0
+    return one_hot
 
 def unpack_bits(arr: NDArray[np.uint8]) -> NDArray[np.uint8]:
     """
@@ -87,8 +104,14 @@ class StateManager:
 
         self.observations: list[dict] = []
         self.maps: list[NDArray[np.uint8]] = []
+        self.valid_actions: list[set[Action]] = []
 
-    def update(self, observation: dict[str, int | NDArray[np.uint8]], map: NDArray[np.uint8] | torch.Tensor):
+    def update(
+        self,
+        observation: dict[str, int | NDArray[np.uint8]],
+        map: NDArray[np.uint8] | torch.Tensor,
+        valid_actions: set[Action]
+    ):
         """
         Args:
             observation: from env
@@ -96,6 +119,7 @@ class StateManager:
         """
         self.observations.append(observation)
         self.maps.append(map) # type: ignore
+        self.valid_actions.append(valid_actions)
 
     def __getitem__(self, idx: int) -> TensorDict:
         if self.use_mapped_viewcone:
@@ -107,28 +131,35 @@ class StateManager:
                     "map": map,
                     "location": torch.from_numpy(observation['location']),
                     "direction": torch.tensor(observation['direction']),
-                    "step": torch.tensor(observation['step'] / 100)
+                    "step": torch.tensor(observation['step'] / 100),
+                    "valid_actions": encode_valid_actions(self.valid_actions[idx]),
                 })
             else:
-                maps = torch.zeros((self.n_frames, 12, 31, 31))
+                maps = torch.zeros((self.n_frames, 10, 31, 31))
                 locations = torch.zeros((self.n_frames, 2))
                 directions = torch.zeros((self.n_frames, 1))
                 steps = torch.zeros((self.n_frames, 1))
+                valid_actions = torch.zeros((self.n_frames, 5))
 
                 n_available = min(len(self.maps), self.n_frames)
                 maps[:n_available] = torch.stack(self.maps[-n_available:]) # type: ignore
 
                 recent_observations = self.observations[-n_available:]
+                recent_valid_actions = self.valid_actions[-n_available:]
 
                 for i, observation in enumerate(recent_observations):
                     locations[i] = torch.from_numpy(observation['location'])
                     directions[i] = observation['direction']
                     steps[i] = observation['step']
 
+                for i, actions in enumerate(recent_valid_actions):
+                    valid_actions[i] = encode_valid_actions(actions)
+
                 return TensorDict({
                     "map": maps,
                     "location": locations,
                     "direction": directions,
+                    "valid_actions": valid_actions,
                     "step": steps,
                     "seq_len": n_available
                 })
@@ -160,5 +191,6 @@ class StateManager:
                 "map": torch.from_numpy(map_array),
                 "location": torch.from_numpy(observation['location']),
                 "direction": torch.tensor(observation['direction']),
+                "valid_actions": encode_valid_actions(self.valid_actions[idx]),
                 "step": torch.tensor(observation['step'] / 100)
             })

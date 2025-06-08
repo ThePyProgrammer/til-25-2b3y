@@ -152,6 +152,7 @@ class MapStateEncoder(nn.Module):
                 state['location'],
                 state['direction'].unsqueeze(-1),
                 state['step'].unsqueeze(-1),
+                state['valid_actions'].unsqueeze(-1),
             ],
             dim=-1
         )
@@ -187,14 +188,14 @@ class RecurrentMapStateEncoder(nn.Module):
         self.map_encoder = V2MapEncoder(config.map_encoder_config)
 
         self.info_encoder = nn.Sequential(
-            nn.Linear(4, 16),
+            nn.Linear(9, 32),
             nn.ReLU(),
-            nn.Linear(16, 16),
+            nn.Linear(32, 32),
             nn.ReLU(),
         )
 
-        dummy_map_input = torch.zeros(1, 1, 12, 31, 31)  # Assuming typical map dimensions
-        dummy_info_input = torch.zeros(1, 1, 4)
+        dummy_map_input = torch.zeros(1, 1, 10, 31, 31)  # Assuming typical map dimensions
+        dummy_info_input = torch.zeros(1, 1, 9)
 
         with torch.no_grad():
             dummy_map_out = self.map_encoder(dummy_map_input.squeeze(1))
@@ -236,7 +237,8 @@ class RecurrentMapStateEncoder(nn.Module):
                     "map": (batch_size, seq_len, channels, height, width),
                     "location": (batch_size, seq_len, 2),
                     "direction": (batch_size, seq_len, 1),
-                    "step": (batch_size, seq_len, 1)
+                    "step": (batch_size, seq_len, 1),
+                    "valid_actions": (batch_size, seq_len, 5)
                 }
             hidden: Optional hidden state for recurrent layer
 
@@ -254,6 +256,7 @@ class RecurrentMapStateEncoder(nn.Module):
                 state['location'],
                 state['direction'],
                 state['step'],
+                state['valid_actions'],
             ],
             dim=-1
         )

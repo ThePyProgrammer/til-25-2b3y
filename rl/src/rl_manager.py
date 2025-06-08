@@ -17,7 +17,7 @@ from networks.v2.encoder import MapEncoderConfig, TemporalMapEncoderConfig
 from agent.inference import Inference
 
 
-CHANNELS, MAP_SIZE, ACTION_DIM = 12, 31, 5
+CHANNELS, MAP_SIZE, ACTION_DIM = 10, 31, 5
 
 
 def set_random_seeds(seed: int = 42):
@@ -58,7 +58,7 @@ class RLManager:
 
         encoder_config = TemporalMapEncoderConfig(
             map_size = 16,
-            channels = 12,
+            channels = 10,
             output_dim = 64,
 
             conv3d_channels = [32, 48, 48, 64],

@@ -60,13 +60,17 @@ class CustomRewardsWrapper(BaseWrapper[AgentID, ObsType, ActionType]):
                 if len(self.action_history[agent]) > 2:
                     last_actions = self.action_history[agent][-2:]
 
-                    repeat_action = last_actions[0] == last_actions[1]
-                    repeat_turns = (
-                        repeat_action
-                        and last_actions[0] in [2, 3]
-                    )
+                    # repeat_action = last_actions[0] == last_actions[1]
+                    # repeat_turns = (
+                    #     repeat_action
+                    #     and last_actions[0] in [2, 3]
+                    # )
 
-                    if repeat_turns:
+                    repeat_turns = last_actions[0] in [2, 3] and last_actions[1] in [2, 3]
+
+                    redundant_move = last_actions[0] in [0, 1] and last_actions[1] in [0, 1] and (last_actions[0] != last_actions[1])
+
+                    if repeat_turns or redundant_move:
                         self.rewards[agent] += self.rewards_dict.get(
                             RewardNames.STATIONARY_PENALTY, 0
                         )

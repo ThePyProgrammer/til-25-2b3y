@@ -51,7 +51,8 @@ def run_episode(
         if random.random() < args.guards_spawnrate:
             num_guards += 1
     env.set_num_active_guards(num_guards)
-    env.reset(seed=seed)
+    for _ in range(4):
+        env.reset(seed=seed)
 
     previous_experience = None  # Clear previous step
     model.to(device)
@@ -112,6 +113,8 @@ def run_episode(
         location = observation["location"]
         position = Point(int(location[0]), int(location[1]))
         direction = Direction(observation["direction"])
+        node: DirectionalNode = env.maps[env.scout].get_node(position, direction)
+        valid_actions = set(node.children.keys())
 
         if args.mapped_viewcone:
             global_map = tiles_to_tensor(
@@ -123,12 +126,12 @@ def run_episode(
                 env.maps[env.scout].step_counter
             )
 
-            local_state_manager.update(observation, env.maps[env.scout].get_tensor())
-            global_state_manager.update(observation, global_map) # convert [x, y] to [y, x]
+            local_state_manager.update(observation, env.maps[env.scout].get_tensor(), valid_actions)
+            global_state_manager.update(observation, global_map, valid_actions) # convert [x, y] to [y, x]
         else:
 
-            local_state_manager.update(observation, env.maps[env.scout].map)
-            global_state_manager.update(observation, env.state().transpose()) # convert [x, y] to [y, x]
+            local_state_manager.update(observation, env.maps[env.scout].map, valid_actions)
+            global_state_manager.update(observation, env.state().transpose(), valid_actions) # convert [x, y] to [y, x]
 
         actor_input = local_state_manager[-1]
         critic_input = global_state_manager[-1] if args.global_critic else actor_input
@@ -144,8 +147,6 @@ def run_episode(
         max_retries = 3
         tries = 0
 
-        node: DirectionalNode = env.maps[env.scout].get_node(position, direction)
-        valid_actions = set(node.children.keys())
         action = None
 
         while action is None or (
@@ -263,7 +264,8 @@ def evaluate(env, model, args, device, seed):
         env.set_num_active_guards(num_guards)
 
         # Reset environment with a varying seed
-        env.reset(seed=seed + eval_ep)
+        for _ in range(4):
+            env.reset(seed=seed + eval_ep)
 
         episode_reward = 0
         episode_steps = 0
@@ -306,6 +308,8 @@ def evaluate(env, model, args, device, seed):
             location = observation["location"]
             position = Point(int(location[0]), int(location[1]))
             direction = Direction(observation["direction"])
+            node: DirectionalNode = env.maps[env.scout].get_node(position, direction)
+            valid_actions = set(node.children.keys())
 
             env.maps[env.scout](observation)
 
@@ -319,15 +323,12 @@ def evaluate(env, model, args, device, seed):
                     env.maps[env.scout].step_counter
                 )
 
-                local_state_manager.update(observation, env.maps[env.scout].get_tensor())
-                global_state_manager.update(observation, global_map) # convert [x, y] to [y, x]
+                local_state_manager.update(observation, env.maps[env.scout].get_tensor(), valid_actions)
+                global_state_manager.update(observation, global_map, valid_actions) # convert [x, y] to [y, x]
             else:
 
-                local_state_manager.update(observation, env.maps[env.scout].map)
-                global_state_manager.update(observation, env.state().transpose()) # convert [x, y] to [y, x]
-
-            node: DirectionalNode = env.maps[env.scout].get_node(position, direction)
-            valid_actions = set(node.children.keys())
+                local_state_manager.update(observation, env.maps[env.scout].map, valid_actions)
+                global_state_manager.update(observation, env.state().transpose(), valid_actions) # convert [x, y] to [y, x]
 
             actor_input = local_state_manager[-1]
             critic_input = global_state_manager[-1] if args.global_critic else actor_input
@@ -480,6 +481,7 @@ def train(env, model, optimizer, scheduler, buffer, args):
                 buffer,
                 args,
                 device,
+                seed=args.seed + timesteps_elapsed + 101
             )
 
             rewards_since_update += rewards

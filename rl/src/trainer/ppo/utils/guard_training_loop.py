@@ -38,7 +38,7 @@ def get_guard_action(
 ):
     """
     Process the current state and get an action for a guard agent
-    
+
     Args:
         env: Gridworld environment
         model: PPO model
@@ -48,7 +48,7 @@ def get_guard_action(
         observation: Current observation
         previous_action: Previous action taken by this agent
         deterministic: Whether to use deterministic action selection (for evaluation)
-        
+
     Returns:
         tuple: (action, log_prob, value, actor_input, critic_input)
         For deterministic=True, log_prob and value will be None
@@ -56,14 +56,14 @@ def get_guard_action(
     location = observation["location"]
     position = Point(int(location[0]), int(location[1]))
     direction = Direction(observation["direction"])
-    
+
     # Update the map with current observation
     env.maps[current_agent](observation)
 
     # Process inputs for model
-    actor_input = torch.zeros((1, 12, args.temporal_frames, 31, 31))
-    critic_input = torch.zeros((1, 12, args.temporal_frames, 31, 31))
-    
+    actor_input = torch.zeros((1, 10, args.temporal_frames, 31, 31))
+    critic_input = torch.zeros((1, 10, args.temporal_frames, 31, 31))
+
     map_state = env.maps[current_agent].get_tensor().unsqueeze(0)  # Get tensor and add batch dim
 
     for i in range(args.temporal_frames - 1):
@@ -180,13 +180,13 @@ def train_guard_episode(
         # Get observation, reward, etc. for the current agent's turn
         observation, reward, termination, truncation, info = env.last()
         current_agent = env.agent_selection
-        
+
         done = termination or truncation
         if termination:
             # Final reward distribution
             for guard_id in env.guards:
                 guard_buffers[guard_id].reward += env.rewards[guard_id]
-        
+
         # Check if this is a guard's turn
         if current_agent in env.guards:
             guard_buffer = guard_buffers[current_agent]
@@ -207,7 +207,7 @@ def train_guard_episode(
                         done=True  # Episode ended
                     )
                     guard_buffer.last_step_info = None
-                
+
                 # Update total reward for all guards when done
                 total_guard_reward = sum(guard_buffer.reward for guard_buffer in guard_buffers.values())
                 break  # End episode
@@ -228,10 +228,10 @@ def train_guard_episode(
 
             # Get action and related info for the current guard
             action, log_prob, value, actor_input, critic_input = get_guard_action(
-                env, model, args, device, current_agent, observation, 
+                env, model, args, device, current_agent, observation,
                 guard_buffer.previous_action, deterministic=False
             )
-            
+
             # Store info for this step to be finalized in the next guard turn
             guard_buffer.last_step_info = {
                 'actor_input': actor_input,
@@ -244,7 +244,7 @@ def train_guard_episode(
             guard_buffer.previous_action = action
             guard_buffer.steps += 1
             total_steps += 1
-            
+
             env.step(action)
         else:
             # Scout's turn - just take a random action
@@ -321,7 +321,7 @@ def evaluate_guards(env, model, args, device, seed):
             if random.random() < args.guards_spawnrate:
                 num_guards += 1
         env.set_num_active_guards(num_guards)
-        
+
         # Reset environment with a varying seed
         env.reset(seed=seed + eval_ep)
 
@@ -338,24 +338,24 @@ def evaluate_guards(env, model, args, device, seed):
             current_agent = env.agent_selection
 
             done = termination or truncation
-            
+
             # Only process guard agents
             if current_agent in env.guards:
                 guard_rewards[current_agent] += reward
-                
+
                 if done:
                     # Add final rewards
                     for guard_id in env.guards:
                         guard_rewards[guard_id] += env.rewards[guard_id]
                     break
-                
+
                 # Get action for the current guard
                 previous_action = previous_actions.get(current_agent, None)
                 action, _, _, _, _ = get_guard_action(
-                    env, model, args, device, current_agent, observation, 
+                    env, model, args, device, current_agent, observation,
                     previous_action, deterministic=True
                 )
-                
+
                 previous_actions[current_agent] = action
                 episode_steps += 1
                 env.step(action)
