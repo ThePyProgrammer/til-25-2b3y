@@ -38,9 +38,9 @@ REWARDS_DICT = {
     RewardNames.SCOUT_CAPTURED: -10,
     RewardNames.SCOUT_RECON: 0.2,
     RewardNames.SCOUT_MISSION: 1,
-    RewardNames.WALL_COLLISION: -0.1,
+    # RewardNames.WALL_COLLISION: -0.1,
     # RewardNames.SCOUT_TRUNCATION: 2.5,
-    RewardNames.STATIONARY_PENALTY: -0.1,
+    # RewardNames.STATIONARY_PENALTY: -0.1,
     # RewardNames.SCOUT_STEP: 0.2
 }
 
@@ -133,13 +133,13 @@ def main(args):
             encoder_config = map_encoder_config
 
             actor_config = DiscretePolicyConfig(
-                input_dim=80,
+                input_dim=96,
                 action_dim=ACTION_DIM,
                 hidden_dims=[128, 128, 128]
             )
 
             critic_config = ValueNetworkConfig(
-                input_dim=80,
+                input_dim=96,
                 hidden_dims=[128, 128, 128]
             )
 

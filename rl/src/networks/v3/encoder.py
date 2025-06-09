@@ -140,10 +140,12 @@ class MapStateEncoder(nn.Module):
         self.map_encoder = V2MapEncoder(config)
 
         self.info_encoder = nn.Sequential(
-            nn.Linear(4, 16),
-            nn.ReLU(),
-            nn.Linear(16, 16),
-            nn.ReLU(),
+            nn.Linear(9, 32),
+            nn.Tanh(),
+            nn.Linear(32, 32),
+            nn.Tanh(),
+            nn.Linear(32, 32),
+            nn.Tanh(),
         )
 
     def forward(self, state: TensorDict):
@@ -152,7 +154,7 @@ class MapStateEncoder(nn.Module):
                 state['location'],
                 state['direction'].unsqueeze(-1),
                 state['step'].unsqueeze(-1),
-                state['valid_actions'].unsqueeze(-1),
+                state['valid_actions'],
             ],
             dim=-1
         )

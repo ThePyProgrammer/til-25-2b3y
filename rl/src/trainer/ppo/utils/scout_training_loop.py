@@ -245,7 +245,7 @@ def evaluate(env, model, args, device, seed):
 
     total_rewards = 0
     total_steps = 0
-    num_episodes = 32
+    num_episodes = 80
 
     # Track individual episode statistics for detailed analysis
     episode_rewards = []
