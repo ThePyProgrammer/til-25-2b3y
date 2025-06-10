@@ -38,9 +38,9 @@ REWARDS_DICT = {
     RewardNames.SCOUT_CAPTURED: -10,
     RewardNames.SCOUT_RECON: 0.2,
     RewardNames.SCOUT_MISSION: 1,
-    # RewardNames.WALL_COLLISION: -0.1,
+    RewardNames.WALL_COLLISION: -0.1,
     # RewardNames.SCOUT_TRUNCATION: 2.5,
-    # RewardNames.STATIONARY_PENALTY: -0.1,
+    RewardNames.STATIONARY_PENALTY: -0.1,
     # RewardNames.SCOUT_STEP: 0.2
 }
 
@@ -53,7 +53,7 @@ def main(args):
     set_seeds(args.seed)
 
     env = gridworld.env(
-        env_wrappers=[CustomStateWrapper, CustomRewardsWrapper, ScoutWrapper],
+        env_wrappers=[CustomStateWrapper, ScoutWrapper],
         render_mode="human" if args.render else None,  # Render the map if requested
         debug=False,  # Enable debug mode
         novice=False,  # Use same map layout every time (for Novice teams only)
