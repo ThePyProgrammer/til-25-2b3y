@@ -31,13 +31,13 @@ def get_init_map_array(size):
 
     # Add walls along the edges
     # Left edge: Add left walls to all tiles in leftmost column
-    map[0:size, 0] |= (1 << 6)  # Left wall (bit 6)
+    map[0:size, 0] += 64
     # Right edge: Add right walls to all tiles in rightmost column
-    map[0:size, size-1] |= (1 << 4)  # Right wall (bit 4)
+    map[0:size, size-1] += 16
     # Top edge: Add top walls to all tiles in top row
-    map[0, 0:size] |= (1 << 7)  # Top wall (bit 7)
+    map[0, 0:size] += 128
     # Bottom edge: Add bottom walls to all tiles in bottom row
-    map[size-1, 0:size] |= (1 << 5)  # Bottom wall (bit 5)
+    map[size-1, 0:size] += 32
 
     return map
 
@@ -459,7 +459,7 @@ class Map:
                 self.step_counter
             )
         else:
-            output = torch.zeros((12, frames, 31, 31))
+            output = torch.zeros((10, frames, 31, 31))
 
             for i, map in enumerate(self.maps[::-1][:frames]):
                 tens = tiles_to_tensor(
@@ -659,7 +659,7 @@ def tiles_to_tensor(
 
     # Extract tile attributes using list comprehensions for better performance
     # Flatten tiles and extract attributes in batch
-    flat_tiles = [tiles[x][y] for y in range(size) for x in range(size)]
+    flat_tiles = [tiles[y][x] for y in range(size) for x in range(size)]
 
     # Extract all attributes at once using numpy array creation
     is_visible = np.array([tile.is_visible for tile in flat_tiles], dtype=bool).reshape(size, size)
@@ -731,10 +731,15 @@ def tiles_to_tensor(
     # Convert to torch tensor
     tensor = torch.from_numpy(tensor_np)
 
-
     for turn in range(direction):
         # left_bit, bottom_bit, right_bit, top_bit = top_bit, left_bit, bottom_bit, right_bit
-        tensor[6], tensor[5], tensor[7], tensor[4] = tensor[4], tensor[6], tensor[5], tensor[7]
+        a = (
+            tensor[4].detach().clone(),
+            tensor[6].detach().clone(),
+            tensor[5].detach().clone(),
+            tensor[7].detach().clone()
+        )
+        tensor[6], tensor[5], tensor[7], tensor[4] = a
 
     # Rotate the entire tensor based on the agent's direction
     if direction == 1:  # down - rotate 90° counter-clockwise
