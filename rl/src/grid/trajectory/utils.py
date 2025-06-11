@@ -9,6 +9,8 @@ from .constraints import (
     TemporalTrajectoryConstraints,
 )
 
+MIN_EXPAND_TRAJECTORIES = 2
+
 
 def fast_forward_trajectories(
     trajectories: list[Trajectory],
@@ -170,12 +172,20 @@ def expand_trajectories(
 
         # Select trajectories from grouped valid trajectories
         num_trajectories = sum(map(lambda g: len(g), endpoint_to_trajectories.values()))
-        print(num_trajectories)
+        # allocate the minimum to all groups first
+        extra_trajectory_budget = trajectory_budget - MIN_EXPAND_TRAJECTORIES * len(
+            endpoint_to_trajectories
+        )
+        print(num_trajectories, extra_trajectory_budget)
+
         for key, group in endpoint_to_trajectories.items():
             if not group:
                 continue
 
-            num_samples = round(len(group) / num_trajectories * trajectory_budget)
+            num_samples = (
+                round(len(group) / num_trajectories * extra_trajectory_budget)
+                + MIN_EXPAND_TRAJECTORIES
+            )
 
             if len(group) <= num_samples:
                 # If we have fewer trajectories than requested samples, use them all
@@ -209,6 +219,7 @@ def expand_trajectories(
             # Add selected trajectories from this group to the main list
             selected_trajectories.update(selected_group_trajectories)
 
+    print(len(selected_trajectories))
     # Now expand the selected trajectories
     for trajectory in selected_trajectories:
         # Add the original trajectory

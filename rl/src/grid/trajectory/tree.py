@@ -233,6 +233,7 @@ class TrajectoryTree:
         """
         if self.next_density is not None:
             if self.next_density[0] == self.num_step:
+                self.last_valid_density = self.next_density[1]
                 return self.next_density[1]
 
         # Initialize empty grid
@@ -495,14 +496,9 @@ class TrajectoryTree:
         if not constraints:
             return  # No filtering needed
 
-        print(self.has_reset, constraints.route.contains)
-
         # bugged? scout doesn't collect point at spawn location
         if Point(0, 0) in constraints.route.excludes:
             constraints.route.excludes.remove(Point(0, 0))
-
-        # has to contain (0, 0)
-        constraints.route.contains.append(Point(0, 0))
 
         self._apply_filtering(constraints, before_step=before_step)
         self.temporal_constraints.update(constraints)
