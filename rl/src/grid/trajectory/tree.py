@@ -30,7 +30,7 @@ class TrajectoryTree:
         consider_direction: bool = True,
         regenerate_edge_threshold: int = 4,
         max_backtrack: int = 3,
-        trajectory_budget: int = 4192,  # Total number of trajectories to keep
+        trajectory_budget: int = 3072,  # Total number of trajectories to keep
         fit_new_trajectories: bool = True,
     ):
         """

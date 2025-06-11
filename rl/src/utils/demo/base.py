@@ -8,7 +8,9 @@ from typing import Dict, List, Set, Tuple, Optional, Any, Union
 import numpy as np
 import cv2
 
-sys.path.append(str(pathlib.Path(os.getcwd()).parent.parent.resolve() / "til-25-environment"))
+sys.path.append(
+    str(pathlib.Path(os.getcwd()).parent.parent.resolve() / "til-25-environment")
+)
 sys.path.append(str(pathlib.Path(os.getcwd()).resolve()))
 
 from til_environment import gridworld
@@ -34,7 +36,7 @@ class BaseDemo:
         self.max_steps = args.steps
         self.record = args.record
         self.human = args.human
-        self.fps = args.fps if hasattr(args, 'fps') else 5
+        self.fps = args.fps if hasattr(args, "fps") else 5
         self.profile = args.profile
 
         # Will be set during initialization
@@ -48,12 +50,7 @@ class BaseDemo:
         self.dirs = None
 
         # For recording
-        self.frames = {
-            'oracle': [],
-            'map': [],
-            'proba': [],
-            'combined': []
-        }
+        self.frames = {"oracle": [], "map": [], "proba": [], "combined": []}
         self.agent_frames = {}
         self.step = 0
         self.execution_times = []
@@ -83,13 +80,17 @@ class BaseDemo:
         # Get guard agent based on guard number
         self.guards = [a for a in self.env.agents if a != self.env.scout]
         if self.guard_idx >= len(self.guards):
-            print(f"Guard number {self.guard_idx} is out of range. Using guard 0 instead.")
+            print(
+                f"Guard number {self.guard_idx} is out of range. Using guard 0 instead."
+            )
             self.guard = self.guards[0]
         else:
             self.guard = self.guards[self.guard_idx]
 
         self.scout = self.env.scout
-        self.controlled_agents = {self.guard}  # By default, control only the specified guard
+        self.controlled_agents = {
+            self.guard
+        }  # By default, control only the specified guard
 
         print(f"Using seed: {self.seed}")
         print(f"Selected guard: {self.guard}")
@@ -97,13 +98,10 @@ class BaseDemo:
     def initialize_agent_map(self, agent):
         """Initialize map and pathfinder for an agent."""
         self.agent_maps[agent] = Map()
-        # self.agent_maps[agent].create_trajectory_tree(Point(0, 0))
-        self.agent_maps[agent].create_particle_filter(Point(0, 0))
+        self.agent_maps[agent].create_trajectory_tree(Point(0, 0))
+        # self.agent_maps[agent].create_particle_filter(Point(0, 0))
         self.agent_pathfinders[agent] = Pathfinder(
-            self.agent_maps[agent],
-            PathfinderConfig(
-                use_viewcone=False
-            )
+            self.agent_maps[agent], PathfinderConfig(use_viewcone=False)
         )
 
     def process_agent(self, agent, observation):
@@ -119,19 +117,21 @@ class BaseDemo:
         self.agent_maps[agent](observation)
 
         # Get next action
-        location = observation['location']
-        direction = observation['direction']
-        action = int(self.agent_pathfinders[agent].get_optimal_action(
-            Point(location[0], location[1]),
-            Direction(direction),
-            0
-        ))
+        location = observation["location"]
+        direction = observation["direction"]
+        action = int(
+            self.agent_pathfinders[agent].get_optimal_action(
+                Point(location[0], location[1]), Direction(direction), 0
+            )
+        )
 
         elapsed_time = time.time() - start_time
         self.execution_times.append(elapsed_time)
 
         self.step += 1
-        print(f"Step {self.step}/{self.max_steps} - Processing time: {elapsed_time:.6f} seconds")
+        print(
+            f"Step {self.step}/{self.max_steps} - Processing time: {elapsed_time:.6f} seconds"
+        )
 
         return action
 
@@ -142,39 +142,46 @@ class BaseDemo:
 
         # Get the three views
         oracle_view = self.env.render()  # RGB format
-        reconstructed_map = MapVisualizer(self.agent_maps[agent]).render(human_mode=False)  # BGR format
+        reconstructed_map = MapVisualizer(self.agent_maps[agent]).render(
+            human_mode=False
+        )  # BGR format
         proba_density = self.agent_maps[agent].trees[0].probability_density
 
         # Normalize and visualize probability density (returns BGR format)
-        proba_density_viz = normalize_proba_density(proba_density, self.dirs['frames_proba'])
+        proba_density_viz = normalize_proba_density(
+            proba_density, self.dirs["frames_proba"]
+        )
 
         # Save individual frames
         if self.dirs:
-            save_frame(cv2.cvtColor(oracle_view, cv2.COLOR_RGB2BGR),
-                      self.dirs['frames_oracle'], self.step)
-            save_frame(reconstructed_map,
-                      self.dirs['frames_map'], self.step)
-            save_frame(proba_density_viz,
-                      self.dirs['frames_proba'], self.step)
+            save_frame(
+                cv2.cvtColor(oracle_view, cv2.COLOR_RGB2BGR),
+                self.dirs["frames_oracle"],
+                self.step,
+            )
+            save_frame(reconstructed_map, self.dirs["frames_map"], self.step)
+            save_frame(proba_density_viz, self.dirs["frames_proba"], self.step)
 
         # Store frames for video creation
-        self.frames['oracle'].append(cv2.cvtColor(oracle_view, cv2.COLOR_RGB2BGR))
-        self.frames['map'].append(reconstructed_map)
-        self.frames['proba'].append(proba_density_viz)
+        self.frames["oracle"].append(cv2.cvtColor(oracle_view, cv2.COLOR_RGB2BGR))
+        self.frames["map"].append(reconstructed_map)
+        self.frames["proba"].append(proba_density_viz)
 
         # Create and save combined view
         views = [oracle_view, reconstructed_map, proba_density_viz]
-        labels = ['Oracle View', 'Reconstructed Map', 'Probability Density']
+        labels = ["Oracle View", "Reconstructed Map", "Probability Density"]
         combined_frame = combine_views(views, labels)
-        self.frames['combined'].append(combined_frame)
+        self.frames["combined"].append(combined_frame)
 
         if self.dirs:
-            save_frame(combined_frame,
-                      self.dirs['frames_combined'], self.step)
+            save_frame(combined_frame, self.dirs["frames_combined"], self.step)
 
     def run(self):
         """Run the simulation."""
-        print("Starting simulation..." + (" and collecting frames..." if self.record else ""))
+        print(
+            "Starting simulation..."
+            + (" and collecting frames..." if self.record else "")
+        )
 
         try:
             for agent in self.env.agent_iter():
@@ -209,22 +216,46 @@ class BaseDemo:
 
         print("Creating videos from frames...")
 
-        create_video(self.frames['oracle'], os.path.join(self.dirs['base'], "oracle_video.mp4"), self.fps)
-        create_video(self.frames['map'], os.path.join(self.dirs['base'], "map_video.mp4"), self.fps)
-        create_video(self.frames['proba'], os.path.join(self.dirs['base'], "probability_video.mp4"), self.fps)
-        create_video(self.frames['combined'], os.path.join(self.dirs['base'], "combined_video.mp4"), self.fps)
+        create_video(
+            self.frames["oracle"],
+            os.path.join(self.dirs["base"], "oracle_video.mp4"),
+            self.fps,
+        )
+        create_video(
+            self.frames["map"],
+            os.path.join(self.dirs["base"], "map_video.mp4"),
+            self.fps,
+        )
+        create_video(
+            self.frames["proba"],
+            os.path.join(self.dirs["base"], "probability_video.mp4"),
+            self.fps,
+        )
+        create_video(
+            self.frames["combined"],
+            os.path.join(self.dirs["base"], "combined_video.mp4"),
+            self.fps,
+        )
 
         print("Videos created:")
         print(f"  - Oracle view: {os.path.join(self.dirs['base'], 'oracle_video.mp4')}")
-        print(f"  - Reconstructed map: {os.path.join(self.dirs['base'], 'map_video.mp4')}")
-        print(f"  - Probability density: {os.path.join(self.dirs['base'], 'probability_video.mp4')}")
-        print(f"  - Combined view: {os.path.join(self.dirs['base'], 'combined_video.mp4')}")
+        print(
+            f"  - Reconstructed map: {os.path.join(self.dirs['base'], 'map_video.mp4')}"
+        )
+        print(
+            f"  - Probability density: {os.path.join(self.dirs['base'], 'probability_video.mp4')}"
+        )
+        print(
+            f"  - Combined view: {os.path.join(self.dirs['base'], 'combined_video.mp4')}"
+        )
 
     def report_statistics(self):
         """Report statistics about the simulation."""
         if self.execution_times:
             avg_time = sum(self.execution_times) / len(self.execution_times)
-            print(f"Average processing time: {avg_time:.6f} seconds over {len(self.execution_times)} steps")
+            print(
+                f"Average processing time: {avg_time:.6f} seconds over {len(self.execution_times)} steps"
+            )
             print(f"Total steps completed: {self.step}")
 
         print(f"Seed {self.seed}")

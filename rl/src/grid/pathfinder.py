@@ -23,7 +23,7 @@ VIEWCONE_INDICES = [
     [-4, 2, -2, 2],  # LEFT
     [-2, 2, -4, 2],  # UP
 ]
-VIEW_SCORE_WEIGHT = 1.0  # Weight for view score in action selection, can be adjusted
+VIEW_SCORE_WEIGHT = 1  # Weight for view score in action selection, can be adjusted
 
 
 @dataclass
@@ -35,7 +35,7 @@ class PathfinderConfig:
         use_path_density: Whether to use path density instead of the default (random walk) probability density
     """
 
-    use_viewcone: bool = True
+    use_viewcone: bool = False
     use_path_density: bool = False
 
 
@@ -211,12 +211,12 @@ class Pathfinder:
         indices = VIEWCONE_INDICES[node.direction]
         view_score = self.density[
             max(0, node.position.x + indices[0]) : min(
-                node.position.x + indices[1] + 1, 15
+                node.position.x + indices[1] + 1, 16
             ),
             max(0, node.position.y + indices[2]) : min(
-                node.position.y + indices[3] + 1, 15
+                node.position.y + indices[3] + 1, 16
             ),
-        ].sum()
+        ].mean()
         return view_score
 
     def _find_paths_to_rewards(
@@ -344,8 +344,16 @@ class Pathfinder:
         for action, scores_list in action_data_map.items():
             if not scores_list:
                 continue
+            # if self.config.use_viewcone:
+            #     if action in start_node.children:
+            #         # Get the next node in the path
+            #         next_node = start_node.children[action]
+            #         print(next_node)
+            #         avg_view_score = self._get_view_score(next_node)
+            # else:
             avg_view_score = sum(s[1] for s in scores_list) / len(scores_list)
             avg_path_ratio = sum(s[2] for s in scores_list) / len(scores_list)
+            print(action, avg_view_score, avg_path_ratio)
             averaged_scores.append((action, avg_view_score, avg_path_ratio))
 
         if not averaged_scores:
