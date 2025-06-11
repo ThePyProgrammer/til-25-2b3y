@@ -30,7 +30,7 @@ class RunningStatistics:
         """Calculate the standard deviation of recorded values"""
         if self.count < 2:
             return torch.tensor(1.0)  # Default value when insufficient data
-        return torch.sqrt(self.var_sum / self.count)
+        return torch.sqrt(self.var_sum / (self.count - 1 + 1e-8))
 
 class RewardScaling(nn.Module):
     """
