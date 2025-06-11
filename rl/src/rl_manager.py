@@ -26,11 +26,9 @@ def set_random_seeds(seed: int = 42):
     np.random.seed(seed)
     torch.manual_seed(seed)
 
+
 class RLManager:
-    def __init__(
-        self,
-        seed: int = 42
-    ):
+    def __init__(self, seed: int = 42):
         """
         Initialize RL Manager.
 
@@ -57,45 +55,35 @@ class RLManager:
         # )
 
         encoder_config = TemporalMapEncoderConfig(
-            map_size = 16,
-            channels = 10,
-            output_dim = 64,
-
-            conv3d_channels = [32, 48, 48, 64],
-            conv3d_kernel_sizes = [(3, 7, 7), (3, 3, 3), (3, 3, 3), (4, 1, 1)],
-            conv3d_strides = [(1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1)],
-            conv3d_paddings = [(1, 0, 0), (1, 0, 0), (1, 0, 0), (0, 0, 0)],
-
-            conv_layers = [64],
-            kernel_sizes = [3],
-            strides = [1],
-            paddings = [0],
-
-            use_batch_norm = True,
-            dropout_rate = 0.1,
-            use_layer_norm = True,
-            use_center_only = True,
+            map_size=16,
+            channels=10,
+            output_dim=64,
+            conv3d_channels=[32, 48, 48, 64],
+            conv3d_kernel_sizes=[(3, 7, 7), (3, 3, 3), (3, 3, 3), (4, 1, 1)],
+            conv3d_strides=[(1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1)],
+            conv3d_paddings=[(1, 0, 0), (1, 0, 0), (1, 0, 0), (0, 0, 0)],
+            conv_layers=[64],
+            kernel_sizes=[3],
+            strides=[1],
+            paddings=[0],
+            use_batch_norm=True,
+            dropout_rate=0.1,
+            use_layer_norm=True,
+            use_center_only=True,
         )
 
         actor_config = DiscretePolicyConfig(
-            input_dim=64,
-            action_dim=ACTION_DIM,
-            hidden_dims=[64, 64]
+            input_dim=64, action_dim=ACTION_DIM, hidden_dims=[64, 64]
         )
 
-        critic_config = ValueNetworkConfig(
-            input_dim=64,
-            hidden_dims=[64, 64]
-        )
+        critic_config = ValueNetworkConfig(input_dim=64, hidden_dims=[64, 64])
 
         self.scout_policy = initialize_model(
-            encoder_config,
-            actor_config,
-            critic_config
+            encoder_config, actor_config, critic_config
         )
 
-        checkpoint = torch.load("./models/scout.pt", map_location='cpu')
-        self.scout_policy.load_state_dict(checkpoint['model_state_dict'])
+        checkpoint = torch.load("./models/scout.pt", map_location="cpu")
+        self.scout_policy.load_state_dict(checkpoint["model_state_dict"])
         self.scout_policy.eval()
 
         self.role = None  # 'scout' or 'guard'
@@ -103,8 +91,8 @@ class RLManager:
         self.pathfinder = Pathfinder(
             self.recon_map,
             PathfinderConfig(
-                use_viewcone = False,
-            )
+                use_viewcone=True,
+            ),
         )
 
         self.scout = Inference(
@@ -114,7 +102,7 @@ class RLManager:
             n_frames=4,
             top_k=5,
             temperature=0.5,
-            action_dim=ACTION_DIM
+            action_dim=ACTION_DIM,
         )
 
         self.initialized = False
@@ -131,10 +119,10 @@ class RLManager:
 
     def _initialize_role(self, observation: dict[str, Any]):
         """Initialize agent role and setup."""
-        self.role = 'scout' if observation.get('scout', 0) == 1 else 'guard'
+        self.role = "scout" if observation.get("scout", 0) == 1 else "guard"
 
         # For guard, initialize the map
-        if self.role == 'guard':
+        if self.role == "guard":
             self.recon_map.create_trajectory_tree(Point(0, 0))
 
         self.initialized = True
@@ -142,9 +130,9 @@ class RLManager:
 
     def _preprocess_observation(self, observation: dict[str, Any]):
         """Preprocess observation data types."""
-        observation['viewcone'] = np.array(observation['viewcone'], dtype=np.uint8)
-        observation['location'] = np.array(observation['location'], dtype=np.uint8)
-        observation['direction'] = int(observation['direction'])
+        observation["viewcone"] = np.array(observation["viewcone"], dtype=np.uint8)
+        observation["location"] = np.array(observation["location"], dtype=np.uint8)
+        observation["direction"] = int(observation["direction"])
 
     def rl(self, observation: dict[str, Any]) -> int:
         """Gets the next action for the agent, based on the observation.
@@ -156,7 +144,7 @@ class RLManager:
             the options.
         """
         # Reset if starting a new episode (step went back to 0)
-        current_step = observation.get('step', 0)
+        current_step = observation.get("step", 0)
         if isinstance(current_step, int):
             if current_step == 0 and self.last_step > 0:
                 self._reset_episode()
@@ -170,16 +158,14 @@ class RLManager:
 
         self.recon_map(observation)
         # Different logic for scout and guard
-        if self.role == 'scout':
+        if self.role == "scout":
             return self.scout(observation)
         else:
-            location = observation['location']
-            direction = observation['direction']
+            location = observation["location"]
+            direction = observation["direction"]
 
             action = self.pathfinder.get_optimal_action(
-                Point(location[0], location[1]),
-                Direction(direction),
-                tree_index=0
+                Point(location[0], location[1]), Direction(direction), tree_index=0
             )
 
             return int(action)
