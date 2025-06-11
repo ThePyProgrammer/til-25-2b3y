@@ -258,7 +258,7 @@ class Map:
 
         for y in range(self.size):
             for x in range(self.size):
-                if self.viewed[y, x]:
+                if self.viewed[y, x] and self.last_updated[y, x] == self.step_counter:
                     # Use Tile utility to extract agent information
                     tile = Tile(self.map[y, x])
                     guards[y, x] = tile.has_guard
@@ -273,6 +273,38 @@ class Map:
             np.ndarray: Boolean array of shape (size, size) for visited locations.
         """
         return self.viewed
+
+
+    def get_rewards(self):
+        """
+        Extract agent information (scouts and guards) from the map.
+
+        Returns:
+            tuple: Two arrays of shape (size, size) for scouts and guards.
+        """
+        rewards = np.zeros((self.size, self.size), dtype=np.float32)
+        is_visible = np.zeros((self.size, self.size), dtype=bool)
+
+        for y in range(self.size):
+            for x in range(self.size):
+                tile = Tile(self.map[y, x])
+                if tile.is_recon:
+                    rewards[y, x] = 0.2
+                elif tile.is_mission:
+                    rewards[y, x] = 1
+
+                if tile.is_visible:
+                    is_visible[y, x] = 1
+
+        remaining_num_tiles = rewards[is_visible == 0].sum()
+
+        if remaining_num_tiles != 0:
+            remaining_reward = TOTAL_REWARD - rewards.sum()
+            remaining_reward_per_tile = remaining_reward / remaining_num_tiles
+
+            rewards[is_visible == 0] = remaining_reward_per_tile
+
+        return rewards
 
     @property
     def time_since_update(self):
@@ -428,7 +460,7 @@ class Map:
 
         return tree
 
-    def get_tensor(self, frames: Optional[int] = None) -> torch.Tensor:
+    def get_tensor(self, frames: Optional[int] = None, location: Optional[NDArray | tuple[int]] = None) -> torch.Tensor:
         """
         Returns a tensor representation of the map with multiple channels.
         The map is rotated so the agent is always facing right (direction 0).
@@ -449,10 +481,13 @@ class Map:
                 - Channel 8: time_since_updated (0-1)
                 - Channel 9: step (0-1) normalised from 0-100 to 0-1
         """
+        if location is None:
+            location = self.agent_loc
+
         if frames is None:
             return tiles_to_tensor(
                 self.get_tiles(),
-                self.agent_loc,
+                location,
                 self.direction,
                 self.size,
                 self.time_since_update,
@@ -464,7 +499,7 @@ class Map:
             for i, map in enumerate(self.maps[::-1][:frames]):
                 tens = tiles_to_tensor(
                     self.tiles[-i-1],
-                    self.agent_loc,
+                    location,
                     self.direction,
                     self.size,
                     self.time_since_updates[-i-1],

@@ -47,6 +47,11 @@ class Pathfinder:
 
         self.last_positions_counter = Counter()
 
+
+        self.density: NDArray[np.float32] = np.zeros(
+            (self.map.size, self.map.size), dtype=np.float32
+        )
+
     @property
     def registry(self) -> NodeRegistry:
         return self.map.registry
@@ -61,6 +66,7 @@ class Pathfinder:
         direction: Direction,
         tree_index: int = 0,
         destination: Optional[Point] = None,
+        density: Optional[NDArray] = None,
         is_guard: bool = True,
     ) -> Action:
         """
@@ -84,12 +90,14 @@ class Pathfinder:
         start_node = self.registry.get_or_create_node(position, direction)
 
         def _inner():
-            if destination is None:
+            if destination is None and density is None:
                 # Validate and get trajectory tree
                 tree = self._validate_and_get_tree(tree_index)
-                self.density: NDArray[np.float32] = tree.probability_density
+                self.density = tree.probability_density
+            elif density is not None:
+                self.density = density
             elif isinstance(destination, Point):
-                self.density: NDArray[np.float32] = np.zeros(
+                self.density = np.zeros(
                     (self.map.size, self.map.size), dtype=np.float32
                 )
                 self.density[destination.y, destination.x] = 1
@@ -366,7 +374,7 @@ class Pathfinder:
             # else:
             avg_view_score = sum(s[1] for s in scores_list) / len(scores_list)
             avg_path_ratio = sum(s[2] for s in scores_list) / len(scores_list)
-            print(action, avg_view_score, avg_path_ratio)
+            # print(action, avg_view_score, avg_path_ratio)
             averaged_scores.append((action, avg_view_score, avg_path_ratio))
 
         if not averaged_scores:

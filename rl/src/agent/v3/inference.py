@@ -11,7 +11,7 @@ from grid.utils import Point, Direction, Action
 from grid.node import DirectionalNode
 from networks.v2.ppo import PPOActorCritic
 from utils.state import StateManager
-from .utils import validate_sampling_params, top_k_sampling
+from ..utils import validate_sampling_params, top_k_sampling
 
 
 def get_best_valid_action(action_probs: torch.Tensor, valid_actions: set[Action]):
