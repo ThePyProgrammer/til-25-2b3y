@@ -3,7 +3,11 @@ from .trajectory import Trajectory
 from ..utils.geometry import Point
 from ..utils.enums import Direction
 from ..node import NodeRegistry
-from .constraints import filter_trajectories_by_constraints, TrajectoryConstraints, TemporalTrajectoryConstraints
+from .constraints import (
+    filter_trajectories_by_constraints,
+    TrajectoryConstraints,
+    TemporalTrajectoryConstraints,
+)
 
 
 def fast_forward_trajectories(
@@ -12,7 +16,7 @@ def fast_forward_trajectories(
     temporal_constraints: TemporalTrajectoryConstraints,
     registry: NodeRegistry,
     max_backtrack: int = 1,
-    num_samples_per_trajectory: int = 2,
+    trajectory_budget: int = 2000,
 ) -> list[Trajectory]:
     """
     When all trajectories have been eliminated, this method tries to resurrect
@@ -32,10 +36,7 @@ def fast_forward_trajectories(
     for backward_step in range(budget - 1, -1, -1):
         # Get candidates from this time step
         candidates: list[Trajectory] = get_initial_candidates(
-            trajectories,
-            backward_step,
-            budget,
-            registry
+            trajectories, backward_step, budget, registry
         )
 
         if not candidates:
@@ -50,7 +51,7 @@ def fast_forward_trajectories(
             budget,
             temporal_constraints,
             max_backtrack=max_backtrack,
-            num_samples_per_trajectory=num_samples_per_trajectory
+            trajectory_budget=trajectory_budget,
         )
 
         if candidates:
@@ -59,11 +60,12 @@ def fast_forward_trajectories(
 
     return []
 
+
 def get_initial_candidates(
     trajectories: list[Trajectory],
     step: int,
     budget: int,
-    registry: Optional[NodeRegistry] = None
+    registry: Optional[NodeRegistry] = None,
 ) -> list[Trajectory]:
     """Get initial trajectory candidates for the given step."""
     candidates = [traj for traj in trajectories if traj.created_at == step]
@@ -77,13 +79,14 @@ def get_initial_candidates(
 
     return candidates
 
+
 def propagate_candidates_forward(
     candidates: list[Trajectory],
     start_step: int,
     budget: int,
     temporal_constraints: TemporalTrajectoryConstraints,
     max_backtrack: int = 1,
-    num_samples_per_trajectory: int = 1,
+    trajectory_budget: int = 2000,
 ) -> list[Trajectory]:
     """Propagate candidates forward through time, applying constraints at each step."""
     for forward_step in range(start_step + 1, budget + 1):
@@ -92,21 +95,21 @@ def propagate_candidates_forward(
             candidates,
             forward_step,
             max_backtrack=max_backtrack,
-            num_samples_per_trajectory=num_samples_per_trajectory
+            trajectory_budget=trajectory_budget,
         )
 
         # Apply constraints for this step
         step_constraints: Optional[TrajectoryConstraints] = (
-            temporal_constraints[forward_step] if forward_step < len(temporal_constraints)
+            temporal_constraints[forward_step]
+            if forward_step < len(temporal_constraints)
             else None
         )
         # step_constraints = None
         candidates = (
             filter_trajectories_by_constraints(
-                new_candidates,
-                step_constraints,
-                use_route_contains=False
-            ) if step_constraints
+                new_candidates, step_constraints, use_route_contains=False
+            )
+            if step_constraints
             else new_candidates
         )
 
@@ -117,12 +120,13 @@ def propagate_candidates_forward(
 
     return candidates
 
+
 def expand_trajectories(
     trajectories: list[Trajectory],
     step: int,
     max_backtrack: int = 3,
-    num_samples_per_trajectory: Optional[int] = 2,
-    consider_direction: bool = True
+    trajectory_budget: Optional[int] = 2000,
+    consider_direction: bool = True,
 ) -> list[Trajectory]:
     """
     Expand trajectories by generating new ones.
@@ -140,16 +144,13 @@ def expand_trajectories(
     """
     expanded: list[Trajectory] = []
 
-    if num_samples_per_trajectory is not None and num_samples_per_trajectory <= 0:
-        return []
-
     # Filter out deleted trajectories
-    valid_trajectories = [traj for traj in trajectories if not traj.to_delete]
+    valid_trajectories = {traj for traj in trajectories if not traj.to_delete}
 
-    selected_trajectories: list[Trajectory] = []
+    selected_trajectories: set[Trajectory] = set()
 
-    if num_samples_per_trajectory is None:
-        # If num_samples_per_trajectory is None, select all valid trajectories
+    if trajectory_budget is None:
+        # If no trajectory budget, select all valid trajectories
         selected_trajectories = valid_trajectories
     else:
         # If num_samples is 1, just keep the shortest trajectory for each endpoint
@@ -168,39 +169,45 @@ def expand_trajectories(
             endpoint_to_trajectories[key].append(traj)
 
         # Select trajectories from grouped valid trajectories
+        num_trajectories = sum(map(lambda g: len(g), endpoint_to_trajectories.values()))
+        print(num_trajectories)
         for key, group in endpoint_to_trajectories.items():
             if not group:
+                continue
+
+            num_samples = round(len(group) / num_trajectories * trajectory_budget)
+
+            if len(group) <= num_samples:
+                # If we have fewer trajectories than requested samples, use them all
+                selected_trajectories.update(group)
                 continue
 
             # Sort by trajectory length (shorter first)
             group.sort(key=lambda t: len(t.route))
 
-            selected_group_trajectories: list[Trajectory] = [] # Use a temporary list for selection in this group
+            selected_group_trajectories: list[Trajectory] = (
+                []
+            )  # Use a temporary list for selection in this group
 
-            if num_samples_per_trajectory == 1:
+            if num_samples == 1:
                 # Just select the shortest
                 selected_group_trajectories.append(group[0])
-            elif num_samples_per_trajectory == 2 or len(group) <= 2:
+            elif num_samples == 2 or len(group) <= 2:
                 # Select shortest and longest (original behavior)
                 selected_group_trajectories.append(group[0])
                 if len(group) > 1 and len(group[-1].route) > len(group[0].route):
                     selected_group_trajectories.append(group[-1])
             else:
-                # Select n evenly spaced samples
-                if len(group) <= num_samples_per_trajectory:
-                    # If we have fewer trajectories than requested samples, use them all
-                    selected_group_trajectories.extend(group)
-                else:
-                    # Get num_samples evenly spaced samples
-                    indices = [
-                        int(i * (len(group) - 1) / (num_samples_per_trajectory - 1))
-                        for i in range(num_samples_per_trajectory)
-                    ]
-                    for idx in indices:
-                        selected_group_trajectories.append(group[idx])
+                # Get num_samples evenly spaced samples
+                indices = [
+                    int(i * (len(group) - 1) / (num_samples - 1))
+                    for i in range(num_samples)
+                ]
+                for idx in indices:
+                    selected_group_trajectories.append(group[idx])
 
             # Add selected trajectories from this group to the main list
-            selected_trajectories.extend(selected_group_trajectories)
+            selected_trajectories.update(selected_group_trajectories)
 
     # Now expand the selected trajectories
     for trajectory in selected_trajectories:
@@ -209,8 +216,7 @@ def expand_trajectories(
 
         # Generate new trajectories
         new_trajectories = trajectory.get_new_trajectories(
-            step,
-            max_backtrack=max_backtrack
+            step, max_backtrack=max_backtrack
         )
         expanded.extend(new_trajectories)
 

@@ -6,38 +6,105 @@ from ..utils.pathfinding import (
     manhattan_distance,
     get_node_neighbors,
     find_shortest_paths,
-    find_path
+    find_path,
 )
 from ..node import DirectionalNode, NodeRegistry
 
 
+def canonicalise_route(route: list[Action]) -> list[Action]:
+    """
+    Canonicalise a route by rebuilding patterns of (TURN, BACKWARD, TURN_R) into (TURN_R, FORWARD, TURN).
+    This helps deduplicate routes that are equivalent in terms of movement.
+    """
+    start_turn_idx = 0
+    turn_type = None
+    canon_route = route[:]
+    for i in range(len(canon_route)):
+        action = canon_route[i]
+        if action == Action.FORWARD:
+            # reset
+            turn_type = None
+        elif action == Action.RIGHT or action == Action.LEFT:
+            if turn_type == Action.LEFT and action == Action.RIGHT:
+                # canonicalise
+                if start_turn_idx < i - 1:
+                    # rewrite
+                    canon_route[start_turn_idx] = Action.RIGHT
+                    for j in range(start_turn_idx + 1, i):
+                        canon_route[j] = Action.FORWARD
+                    canon_route[i] = Action.LEFT
+            elif turn_type == Action.RIGHT and action == Action.LEFT:
+                # canonicalise
+                if start_turn_idx < i - 1:
+                    # rewrite
+                    canon_route[start_turn_idx] = Action.LEFT
+                    for j in range(start_turn_idx + 1, i):
+                        canon_route[j] = Action.FORWARD
+                    canon_route[i] = Action.RIGHT
+                else:
+                    # turn no-op turns into LEFT, RIGHT
+                    canon_route[i] = Action.RIGHT
+                    canon_route[start_turn_idx] = Action.LEFT
+            elif turn_type == Action.RIGHT and action == Action.RIGHT:
+                # canonicalise
+                if start_turn_idx < i - 1:
+                    # rewrite
+                    canon_route[start_turn_idx] = Action.LEFT
+                    for j in range(start_turn_idx + 1, i):
+                        canon_route[j] = Action.FORWARD
+                    canon_route[i] = Action.LEFT
+                else:
+                    # turn 180 turns into LEFT, LEFT
+                    canon_route[i] = Action.LEFT
+                    canon_route[start_turn_idx] = Action.LEFT
+            elif turn_type == Action.LEFT and action == Action.LEFT:
+                # canonicalise
+                if start_turn_idx < i - 1:
+                    # rewrite
+                    canon_route[start_turn_idx] = Action.RIGHT
+                    for j in range(start_turn_idx + 1, i):
+                        canon_route[j] = Action.FORWARD
+                    canon_route[i] = Action.RIGHT
+            start_turn_idx = i
+            turn_type = canon_route[i]
+
+    return canon_route
+
+
 # @lru_cache(maxsize=2**16)
-def get_trajectory_hash(root: DirectionalNode, *route: Action) -> int:
-    return hash((root, *route))
+def get_trajectory_hash(root: DirectionalNode, route: list[Action]) -> int:
+    # print(route)
+    canon_route = canonicalise_route(route)
+    return hash((root, *canon_route))
+
 
 class Trajectory:
     def __init__(self, root_node: DirectionalNode, step: int):
         self.head: DirectionalNode = root_node
         self.route: list[Action] = []
         self.nodes: list[DirectionalNode] = [self.head]
-        self.position_cache: set[Point] = {root_node.position}  # Cache positions for faster lookups
+        self.position_cache: set[Point] = {
+            root_node.position
+        }  # Cache positions for faster lookups
 
         self.invalid: bool = False
         self.invalid_action_idx: Optional[int] = None
 
         self.pruned: bool = False
-        self.discarded: bool = False # if it's valid and was not (yet) pruned, but discarded by  TrajectoryTree.step()
+        self.discarded: bool = (
+            False  # if it's valid and was not (yet) pruned, but discarded by  TrajectoryTree.step()
+        )
 
         self._step: int = step
 
-        self._inherited_from: Optional['Trajectory'] = None
-        self._inherits_to: dict[Action, 'Trajectory'] = {}
+        self._inherited_from: Optional["Trajectory"] = None
+        self._inherits_to: dict[Action, "Trajectory"] = {}
 
         self._hash: Optional[int] = None
 
     def __hash__(self) -> int:
         if self._hash is None:
-            self._hash = get_trajectory_hash(self.head, *self.route)
+            self._hash = get_trajectory_hash(self.head, self.route)
         return self._hash
 
     def __eq__(self, other: Any) -> bool:
@@ -45,7 +112,7 @@ class Trajectory:
             return False
         return self.__hash__() == hash(other)
 
-    @lru_cache(maxsize=1024+256)
+    @lru_cache(maxsize=1024 + 256)
     def __contains__(self, item: DirectionalNode | Point) -> bool:
         """
         Check if a DirectionalNode or Point is in this trajectory.
@@ -67,7 +134,7 @@ class Trajectory:
 
         return False
 
-    def copy(self) -> 'Trajectory':
+    def copy(self) -> "Trajectory":
         """Create a deep copy of this trajectory with the same root but new lists."""
         new_trajectory = Trajectory(self.head, self.created_at)
         new_trajectory.route = self.route[:]
@@ -201,9 +268,7 @@ class Trajectory:
         return self.__str__()
 
     def has_backtrack(
-        self,
-        max_backtrack: int = 3,
-        consider_direction: bool = False
+        self, max_backtrack: int = 3, consider_direction: bool = False
     ) -> bool:
         """
         Check if this trajectory backtracks more than the allowed number of steps.
@@ -232,7 +297,7 @@ class Trajectory:
         return False
 
     @property
-    def parent(self) -> Optional['Trajectory']:
+    def parent(self) -> Optional["Trajectory"]:
         return self._inherited_from
 
     @property
@@ -249,7 +314,9 @@ class Trajectory:
             return self._step
         return len(self.route)
 
-    def get_new_trajectories(self, step: int, max_backtrack: Optional[int] = None) -> list['Trajectory']:
+    def get_new_trajectories(
+        self, step: int, max_backtrack: Optional[int] = None
+    ) -> list["Trajectory"]:
         """
         Get new trajectories by exploring all valid actions from the current endpoint.
 

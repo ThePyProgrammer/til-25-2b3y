@@ -6,8 +6,24 @@ from numpy.typing import NDArray
 
 from .map import Map
 from .trajectory import TrajectoryTree
-from .utils import Point, Direction, Action, find_shortest_paths, find_reward_positions, get_node_neighbors
+from .utils import (
+    Point,
+    Direction,
+    Action,
+    find_shortest_paths,
+    find_reward_positions,
+    get_node_neighbors,
+)
 from .node import DirectionalNode, NodeRegistry
+
+# VIEWCONE_INDICES[direction] = [x neg offset, x pos offset, y neg offset, y pos offset]
+VIEWCONE_INDICES = [
+    [-2, 4, -2, 2],  # RIGHT
+    [-2, 2, -2, 4],  # DOWN
+    [-4, 2, -2, 2],  # LEFT
+    [-2, 2, -4, 2],  # UP
+]
+VIEW_SCORE_WEIGHT = 1.0  # Weight for view score in action selection, can be adjusted
 
 
 @dataclass
@@ -18,15 +34,13 @@ class PathfinderConfig:
         use_viewcone: Whether to use viewcone for action selection. If False, only path efficiency is considered.
         use_path_density: Whether to use path density instead of the default (random walk) probability density
     """
-    use_viewcone: bool = False
+
+    use_viewcone: bool = True
     use_path_density: bool = False
 
+
 class Pathfinder:
-    def __init__(
-        self,
-        map: Map,
-        config: PathfinderConfig
-    ) -> None:
+    def __init__(self, map: Map, config: PathfinderConfig) -> None:
         self.map = map
         self.config = config
 
@@ -44,7 +58,7 @@ class Pathfinder:
         direction: Direction,
         tree_index: int = 0,
         destination: Optional[Point] = None,
-        is_guard: bool = True
+        is_guard: bool = True,
     ) -> Action:
         """
         Get the optimal action to take from the current position and direction.
@@ -68,10 +82,14 @@ class Pathfinder:
             tree = self._validate_and_get_tree(tree_index)
             self.density: NDArray[np.float32] = tree.probability_density
         elif isinstance(destination, Point):
-            self.density: NDArray[np.float32] = np.zeros((self.map.size, self.map.size), dtype=np.float32)
+            self.density: NDArray[np.float32] = np.zeros(
+                (self.map.size, self.map.size), dtype=np.float32
+            )
             self.density[destination.y, destination.x] = 1
         else:
-            raise TypeError(f"destination should be of type Optional[Point] not {type(destination)}")
+            raise TypeError(
+                f"destination should be of type Optional[Point] not {type(destination)}"
+            )
 
         # Get guard positions if this is a guard agent
         self.guard_positions = []
@@ -104,14 +122,18 @@ class Pathfinder:
 
             if candidate_actions:
                 if self.config.use_viewcone:
-                    raise NotImplementedError("use_viewcone is not implemented")
+                    # no rewards, just pick the first available action
+                    return candidate_actions[0][0]
+                    # raise NotImplementedError("use_viewcone is not implemented")
                 else:
                     # If not using viewcone, just pick the first available action
                     return candidate_actions[0][0]
             return self._get_default_action(start_node)
 
         # Find shortest paths to all rewards
-        best_paths_to_rewards = self._find_paths_to_rewards(start_node, reward_positions)
+        best_paths_to_rewards = self._find_paths_to_rewards(
+            start_node, reward_positions
+        )
 
         # Choose the best action prioritizing visibility of high probability areas
         # then considering reward/distance ratio
@@ -132,7 +154,12 @@ class Pathfinder:
 
             if candidate_actions:
                 if self.config.use_viewcone:
-                    raise NotImplementedError("use_viewcone is not implemented")
+                    # If using viewcone, sort by view score
+                    candidate_actions.sort(
+                        key=lambda x: self._get_view_score(x[1]), reverse=True
+                    )
+                    # Return the action with the best view score
+                    return candidate_actions[0][0]
                 else:
                     # If not using viewcone, just pick the first available action
                     return candidate_actions[0][0]
@@ -140,15 +167,17 @@ class Pathfinder:
 
         return best_action
 
-    def _validate_and_get_tree(self, tree_index: int) -> 'TrajectoryTree':
+    def _validate_and_get_tree(self, tree_index: int) -> "TrajectoryTree":
         """Validates the tree index and returns the corresponding tree."""
         if tree_index >= len(self.trees):
-            raise ValueError(f"Invalid tree_index: {tree_index}. Only {len(self.trees)} trees available.")
+            raise ValueError(
+                f"Invalid tree_index: {tree_index}. Only {len(self.trees)} trees available."
+            )
         return self.trees[tree_index]
 
-    def _find_reward_positions(self) -> list[tuple[Point, float]]:
+    def _find_reward_positions(self, threshold=0.0) -> list[tuple[Point, float]]:
         """Finds all positions with positive rewards in the reward density."""
-        return find_reward_positions(self.density, threshold=0.0)
+        return find_reward_positions(self.density, threshold=threshold)
 
     def _get_default_action(self, node: DirectionalNode) -> Action:
         """Returns a default valid action from the given node."""
@@ -178,10 +207,20 @@ class Pathfinder:
                 return True
         return False
 
+    def _get_view_score(self, node: DirectionalNode) -> float:
+        indices = VIEWCONE_INDICES[node.direction]
+        view_score = self.density[
+            max(0, node.position.x + indices[0]) : min(
+                node.position.x + indices[1] + 1, 15
+            ),
+            max(0, node.position.y + indices[2]) : min(
+                node.position.y + indices[3] + 1, 15
+            ),
+        ].sum()
+        return view_score
+
     def _find_paths_to_rewards(
-        self,
-        start_node: DirectionalNode,
-        reward_positions: list[tuple[Point, float]]
+        self, start_node: DirectionalNode, reward_positions: list[tuple[Point, float]]
     ) -> dict[Point, tuple[DirectionalNode, int, Action]]:
         """
         Uses Dijkstra's algorithm to find shortest paths to all reward positions.
@@ -197,7 +236,9 @@ class Pathfinder:
         goal_nodes = []
         for point in goal_points:
             for direction in Direction:
-                if (node := self.registry.get_or_create_node(point, direction)) is not None:
+                if (
+                    node := self.registry.get_or_create_node(point, direction)
+                ) is not None:
                     goal_nodes.append(node)
 
         # Custom neighbor function that avoids guard positions
@@ -206,7 +247,8 @@ class Pathfinder:
             # Filter out neighbors that would move to a guard position
             if self.guard_positions:
                 neighbors = {
-                    action: neighbor for action, neighbor in neighbors.items()
+                    action: neighbor
+                    for action, neighbor in neighbors.items()
                     if not self._is_blocked_by_guard(neighbor.position)
                 }
             return neighbors
@@ -216,7 +258,7 @@ class Pathfinder:
             start_node=start_node,
             goal_nodes=goal_nodes,
             get_neighbors=get_neighbors_avoiding_guards,
-            node_hash=hash
+            node_hash=hash,
         )
 
         # Convert to expected format: Point -> (node, distance, first_action)
@@ -247,7 +289,7 @@ class Pathfinder:
     def _select_best_action(
         self,
         reward_positions: list[tuple[Point, float]],
-        best_paths_to_rewards: dict[Point, tuple[DirectionalNode, int, Action]]
+        best_paths_to_rewards: dict[Point, tuple[DirectionalNode, int, Action]],
     ) -> Optional[Action]:
         """
         Selects the best action prioritizing visibility of tiles with high probability density,
@@ -257,7 +299,9 @@ class Pathfinder:
         When the agent is a guard, also avoids actions that would lead to other guard positions.
         """
         # First, evaluate all candidate actions and group by first_action
-        action_data_map: dict[Action, list[tuple[Optional[DirectionalNode], float, float]]] = {}
+        action_data_map: dict[
+            Action, list[tuple[Optional[DirectionalNode], float, float]]
+        ] = {}
 
         for reward_pos, reward_value in reward_positions:
             if reward_pos in best_paths_to_rewards:
@@ -272,18 +316,18 @@ class Pathfinder:
                     if self._is_blocked_by_guard(next_node.position):
                         continue
 
-
                 # Calculate path efficiency score
-                if distance == 0: # Agent is already at the reward or a path of 0 cost
-                    path_ratio = float('inf') if reward_value > 0 else 0 # Infinite if positive reward, 0 otherwise
+                if distance == 0:  # Agent is already at the reward or a path of 0 cost
+                    path_ratio = (
+                        float("inf") if reward_value > 0 else 0
+                    )  # Infinite if positive reward, 0 otherwise
                 else:
                     path_ratio = reward_value / distance
 
                 # Calculate view score if using viewcone
                 view_score = 0.0  # Default view_score
                 if self.config.use_viewcone:
-                    raise NotImplementedError("use_viewcone scoring is not implemented")
-
+                    view_score = self._get_view_score(node)
 
                 if first_action not in action_data_map:
                     action_data_map[first_action] = []
