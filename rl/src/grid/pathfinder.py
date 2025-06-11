@@ -1,3 +1,4 @@
+from collections import Counter
 from dataclasses import dataclass
 from typing import Optional
 
@@ -23,7 +24,7 @@ VIEWCONE_INDICES = [
     [-4, 2, -2, 2],  # LEFT
     [-2, 2, -4, 2],  # UP
 ]
-VIEW_SCORE_WEIGHT = 1  # Weight for view score in action selection, can be adjusted
+LAST_POSITION_PENALTY = 0.5  # Penalty for revisits
 
 
 @dataclass
@@ -43,6 +44,8 @@ class Pathfinder:
     def __init__(self, map: Map, config: PathfinderConfig) -> None:
         self.map = map
         self.config = config
+
+        self.last_positions_counter = Counter()
 
     @property
     def registry(self) -> NodeRegistry:
@@ -77,95 +80,104 @@ class Pathfinder:
         Returns:
             Action: The optimal action to take
         """
-        if destination is None:
-            # Validate and get trajectory tree
-            tree = self._validate_and_get_tree(tree_index)
-            self.density: NDArray[np.float32] = tree.probability_density
-        elif isinstance(destination, Point):
-            self.density: NDArray[np.float32] = np.zeros(
-                (self.map.size, self.map.size), dtype=np.float32
-            )
-            self.density[destination.y, destination.x] = 1
-        else:
-            raise TypeError(
-                f"destination should be of type Optional[Point] not {type(destination)}"
-            )
-
-        # Get guard positions if this is a guard agent
-        self.guard_positions = []
-        if is_guard:
-            guards_map = self.map.get_guards()
-            for y in range(self.map.size):
-                for x in range(self.map.size):
-                    # Add guard position to avoid list, excluding current position
-                    if guards_map[y, x] and not (x == position.x and y == position.y):
-                        self.guard_positions.append(Point(x, y))
-
         # Get the current node from the registry
         start_node = self.registry.get_or_create_node(position, direction)
 
-        # Find positions with rewards
-        reward_positions = self._find_reward_positions()
+        def _inner():
+            if destination is None:
+                # Validate and get trajectory tree
+                tree = self._validate_and_get_tree(tree_index)
+                self.density: NDArray[np.float32] = tree.probability_density
+            elif isinstance(destination, Point):
+                self.density: NDArray[np.float32] = np.zeros(
+                    (self.map.size, self.map.size), dtype=np.float32
+                )
+                self.density[destination.y, destination.x] = 1
+            else:
+                raise TypeError(
+                    f"destination should be of type Optional[Point] not {type(destination)}"
+                )
 
-        # If no rewards found, return an action that maximizes visibility of high probability areas
-        if not reward_positions:
-            # Try all possible actions and choose the one with best view
-            candidate_actions = []
-            for action in Action:
-                if action in start_node.children:
-                    child_node = start_node.children[action]
-                    # Skip actions that would lead to guard positions
-                    if self.guard_positions:
-                        if self._is_blocked_by_guard(child_node.position):
-                            continue
-                    candidate_actions.append((action, child_node))
+            # Get guard positions if this is a guard agent
+            self.guard_positions = []
+            if is_guard:
+                guards_map = self.map.get_guards()
+                for y in range(self.map.size):
+                    for x in range(self.map.size):
+                        # Add guard position to avoid list, excluding current position
+                        if guards_map[y, x] and not (
+                            x == position.x and y == position.y
+                        ):
+                            self.guard_positions.append(Point(x, y))
 
-            if candidate_actions:
-                if self.config.use_viewcone:
-                    # no rewards, just pick the first available action
-                    return candidate_actions[0][0]
-                    # raise NotImplementedError("use_viewcone is not implemented")
-                else:
-                    # If not using viewcone, just pick the first available action
-                    return candidate_actions[0][0]
-            return self._get_default_action(start_node)
+            # Find positions with rewards
+            reward_positions = self._find_reward_positions()
 
-        # Find shortest paths to all rewards
-        best_paths_to_rewards = self._find_paths_to_rewards(
-            start_node, reward_positions
-        )
+            # If no rewards found, return an action that maximizes visibility of high probability areas
+            if not reward_positions:
+                # Try all possible actions and choose the one with best view
+                candidate_actions = []
+                for action in Action:
+                    if action in start_node.children:
+                        child_node = start_node.children[action]
+                        # Skip actions that would lead to guard positions
+                        if self.guard_positions:
+                            if self._is_blocked_by_guard(child_node.position):
+                                continue
+                        candidate_actions.append((action, child_node))
 
-        # Choose the best action prioritizing visibility of high probability areas
-        # then considering reward/distance ratio
-        best_action = self._select_best_action(reward_positions, best_paths_to_rewards)
+                if candidate_actions:
+                    if self.config.use_viewcone:
+                        # no rewards, just pick the first available action
+                        # return candidate_actions[0][0]
+                        raise NotImplementedError("use_viewcone is not implemented")
+                    else:
+                        # If not using viewcone, just pick the first available action
+                        return candidate_actions[0][0]
+                return self._get_default_action(start_node)
 
-        # If no path found to any reward, choose action with best view
-        if best_action is None:
-            # Try all possible actions and choose the one with best view
-            candidate_actions = []
-            for action in Action:
-                if action in start_node.children:
-                    child_node = start_node.children[action]
-                    # Skip actions that would lead to guard positions
-                    if self.guard_positions:
-                        if self._is_blocked_by_guard(child_node.position):
-                            continue
-                    candidate_actions.append((action, child_node))
+            # Find shortest paths to all rewards
+            best_paths_to_rewards = self._find_paths_to_rewards(
+                start_node, reward_positions
+            )
 
-            if candidate_actions:
-                if self.config.use_viewcone:
-                    # If using viewcone, sort by view score
-                    candidate_actions.sort(
-                        key=lambda x: self._get_view_score(x[1]), reverse=True
-                    )
-                    # Return the action with the best view score
-                    return candidate_actions[0][0]
-                else:
-                    # If not using viewcone, just pick the first available action
-                    return candidate_actions[0][0]
-            return self._get_default_action(start_node)
+            # Choose the best action prioritizing visibility of high probability areas
+            # then considering reward/distance ratio
+            best_action = self._select_best_action(
+                start_node, reward_positions, best_paths_to_rewards
+            )
 
-        return best_action
+            # If no path found to any reward, choose action with best view
+            if best_action is None:
+                # Try all possible actions and choose the one with best view
+                candidate_actions = []
+                for action in Action:
+                    if action in start_node.children:
+                        child_node = start_node.children[action]
+                        # Skip actions that would lead to guard positions
+                        if self.guard_positions:
+                            if self._is_blocked_by_guard(child_node.position):
+                                continue
+                        candidate_actions.append((action, child_node))
+
+                if candidate_actions:
+                    if self.config.use_viewcone:
+                        # If using viewcone, sort by view score
+                        candidate_actions.sort(
+                            key=lambda x: self._get_view_score(x[1]), reverse=True
+                        )
+                        # Return the action with the best view score
+                        return candidate_actions[0][0]
+                    else:
+                        # If not using viewcone, just pick the first available action
+                        return candidate_actions[0][0]
+                return self._get_default_action(start_node)
+
+            return best_action
+
+        action = _inner()
+        self.last_positions_counter[start_node.children[action]] += 1
+        return action
 
     def _validate_and_get_tree(self, tree_index: int) -> "TrajectoryTree":
         """Validates the tree index and returns the corresponding tree."""
@@ -288,6 +300,7 @@ class Pathfinder:
 
     def _select_best_action(
         self,
+        start_node: DirectionalNode,
         reward_positions: list[tuple[Point, float]],
         best_paths_to_rewards: dict[Point, tuple[DirectionalNode, int, Action]],
     ) -> Optional[Action]:
@@ -326,8 +339,8 @@ class Pathfinder:
 
                 # Calculate view score if using viewcone
                 view_score = 0.0  # Default view_score
-                if self.config.use_viewcone:
-                    view_score = self._get_view_score(node)
+                # if self.config.use_viewcone:
+                #     view_score = self._get_view_score(node)
 
                 if first_action not in action_data_map:
                     action_data_map[first_action] = []
@@ -365,6 +378,15 @@ class Pathfinder:
             # Current view_score is always 0 due to NotImplementedError, so this effectively sorts by path_ratio only for now.
             averaged_scores.sort(key=lambda x: (x[1], x[2]), reverse=True)
         else:
+            # apply penalties for revisiting last positions
+            for i in range(len(averaged_scores)):
+                action, view_score, path_ratio = averaged_scores[i]
+                if start_node.children[action] in self.last_positions_counter:
+                    penalty = (
+                        LAST_POSITION_PENALTY
+                        ** self.last_positions_counter[start_node.children[action]]
+                    )
+                    averaged_scores[i] = (action, view_score, path_ratio * penalty)
             # Sort only by average path ratio (descending) when not using viewcone
             averaged_scores.sort(key=lambda x: x[2], reverse=True)
 

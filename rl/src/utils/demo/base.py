@@ -108,7 +108,7 @@ class BaseDemo:
         """Process an agent's observation and decide on an action."""
         if agent not in self.controlled_agents:
             # Random movement for uncontrolled agents
-            return random.choice([0, 1, 2, 3])
+            return random.choice([0, 1, 2, 3, 4])
 
         # Record execution time
         start_time = time.time()

@@ -270,6 +270,7 @@ class AdvancedDemo(BaseDemo):
                 proba_density = (
                     self.agent_maps[agent].trees[0].probability_density
                     if hasattr(self.agent_maps[agent], "trees")
+                    and len(self.agent_maps[agent].trees) > 0
                     else None
                 )
                 proba_view = normalize_proba_density(proba_density)

@@ -1,5 +1,16 @@
 from dataclasses import dataclass
-from typing import TypeVar, Generic, Optional, Callable, Dict, Set, List, Tuple, Any, TYPE_CHECKING
+from typing import (
+    TypeVar,
+    Generic,
+    Optional,
+    Callable,
+    Dict,
+    Set,
+    List,
+    Tuple,
+    Any,
+    TYPE_CHECKING,
+)
 import heapq
 
 import numpy as np
@@ -12,14 +23,21 @@ if TYPE_CHECKING:
     from ..node import DirectionalNode
 
 # Type variables for generic pathfinding
-T = TypeVar('T')  # Node type
-C = TypeVar('C')  # Cost type
+T = TypeVar("T")  # Node type
+C = TypeVar("C")  # Cost type
+
 
 class PathNode(Generic[T]):
     """Wrapper for nodes in pathfinding algorithms with tracking info."""
 
-    def __init__(self, node: T, parent: Optional['PathNode[T]'] = None,
-                 action: Optional[Action] = None, g_cost: float = 0, h_cost: float = 0):
+    def __init__(
+        self,
+        node: T,
+        parent: Optional["PathNode[T]"] = None,
+        action: Optional[Action] = None,
+        g_cost: float = 0,
+        h_cost: float = 0,
+    ):
         self.node = node
         self.parent = parent
         self.action = action  # Action taken to reach this node from parent
@@ -31,13 +49,15 @@ class PathNode(Generic[T]):
         """Total estimated cost (g + h)."""
         return self.g_cost + self.h_cost
 
-    def __lt__(self, other: 'PathNode[T]') -> bool:
+    def __lt__(self, other: "PathNode[T]") -> bool:
         """Comparison for priority queue."""
         return self.f_cost < other.f_cost
+
 
 @dataclass
 class PathResult(Generic[T]):
     """Result of a pathfinding search."""
+
     path: List[T]
     actions: List[Action]
     cost: float
@@ -53,13 +73,14 @@ class PathResult(Generic[T]):
         """Alias for path."""
         return self.path
 
+
 def find_path(
     start_node: T,
     is_goal: Callable[[T], bool],
     get_neighbors: Callable[[T], Dict[Action, T]],
     heuristic: Callable[[T], float] = lambda _: 0,
     node_hash: Callable[[T], Any] = hash,
-    max_iterations: int = 10000
+    max_iterations: int = 10000,
 ) -> PathResult[T]:
     """
     Generic A* pathfinding algorithm.
@@ -126,13 +147,16 @@ def find_path(
                         # Update if better path found
                         if g_cost < node.g_cost:
                             # Replace in open set
-                            open_set[i] = PathNode(neighbor, current, action, g_cost, h_cost)
+                            open_set[i] = PathNode(
+                                neighbor, current, action, g_cost, h_cost
+                            )
                             heapq.heapify(open_set)
                             node_lookup[neighbor_hash] = open_set[i]
                         break
 
     # No path found
-    return PathResult([], [], float('inf'), None)
+    return PathResult([], [], float("inf"), None)
+
 
 def reconstruct_path(end_node: PathNode[T]) -> PathResult[T]:
     """
@@ -164,12 +188,13 @@ def reconstruct_path(end_node: PathNode[T]) -> PathResult[T]:
 
     return PathResult(path, actions, end_node.g_cost, first_action)
 
+
 def find_shortest_paths(
     start_node: T,
     goal_nodes: List[T],
     get_neighbors: Callable[[T], Dict[Action, T]],
     node_hash: Callable[[T], Any] = hash,
-    max_iterations: int = 10000
+    max_iterations: int = 10000,
 ) -> Dict[T, PathResult[T]]:
     """
     Finds shortest paths from start to multiple goals using Dijkstra's algorithm.
@@ -223,11 +248,7 @@ def find_shortest_paths(
         # Check if this is a goal node
         if current_hash in goal_hashes:
             # Reconstruct path
-            path = reconstruct_dijkstra_path(
-                current_hash,
-                distances,
-                hash_to_node
-            )
+            path = reconstruct_dijkstra_path(current_hash, distances, hash_to_node)
 
             # Find the goal this node corresponds to
             for goal in goal_nodes:
@@ -240,7 +261,7 @@ def find_shortest_paths(
                         path=path,
                         actions=get_actions_from_path(path, get_neighbors, node_hash),
                         cost=current_dist,
-                        first_action=first_action
+                        first_action=first_action,
                     )
                     break
 
@@ -265,7 +286,11 @@ def find_shortest_paths(
             # If this is a shorter path or a new node
             if neighbor_hash not in distances or new_dist < distances[neighbor_hash][0]:
                 # Determine first action in the path
-                first_action = action if current_hash == node_hash(start_node) else distances[current_hash][1]
+                first_action = (
+                    action
+                    if current_hash == node_hash(start_node)
+                    else distances[current_hash][1]
+                )
 
                 # Update distance and path info
                 distances[neighbor_hash] = (new_dist, first_action, current_hash)
@@ -275,10 +300,11 @@ def find_shortest_paths(
 
     return results
 
+
 def reconstruct_dijkstra_path(
     end_hash: Any,
     distances: Dict[Any, Tuple[float, Optional[Action], Optional[Any]]],
-    hash_to_node: Dict[Any, T]
+    hash_to_node: Dict[Any, T],
 ) -> List[T]:
     """
     Reconstructs path from Dijkstra's algorithm results.
@@ -303,10 +329,11 @@ def reconstruct_dijkstra_path(
     path.reverse()
     return path
 
+
 def get_actions_from_path(
     path: List[T],
     get_neighbors: Callable[[T], Dict[Action, T]],
-    node_hash: Callable[[T], Any] = hash
+    node_hash: Callable[[T], Any] = hash,
 ) -> List[Action]:
     """
     Determines the actions taken along a path.
@@ -337,6 +364,7 @@ def get_actions_from_path(
 
     return actions
 
+
 def manhattan_distance(p1: Point, p2: Point) -> int:
     """
     Calculate Manhattan distance between two points.
@@ -350,8 +378,9 @@ def manhattan_distance(p1: Point, p2: Point) -> int:
     """
     return abs(p1.x - p2.x) + abs(p1.y - p2.y)
 
+
 def get_directional_neighbors(
-    state: Tuple[Point, Direction]
+    state: Tuple[Point, Direction],
 ) -> Dict[Action, Tuple[Point, Direction]]:
     """
     Gets neighboring states for a positional state with direction.
@@ -384,7 +413,7 @@ def get_directional_neighbors(
     return neighbors
 
 
-def get_node_neighbors(node: 'DirectionalNode') -> Dict[Action, 'DirectionalNode']:
+def get_node_neighbors(node: "DirectionalNode") -> Dict[Action, "DirectionalNode"]:
     """
     Gets neighboring nodes for a DirectionalNode.
 
@@ -398,8 +427,7 @@ def get_node_neighbors(node: 'DirectionalNode') -> Dict[Action, 'DirectionalNode
 
 
 def find_reward_positions(
-    density: NDArray[np.float32],
-    threshold: float = 0.0
+    density: NDArray[np.float32], threshold: float = 0.0
 ) -> List[Tuple[Point, float]]:
     """
     Finds positions with rewards above a threshold in a density map.
