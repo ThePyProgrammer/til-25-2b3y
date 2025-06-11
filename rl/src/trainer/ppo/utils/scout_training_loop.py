@@ -1,6 +1,8 @@
+from collections import Counter
 import random
 
 import torch
+from torch.distributions import Categorical
 from tensordict.tensordict import TensorDict
 import numpy as np
 from tqdm import tqdm
@@ -12,11 +14,28 @@ from .buffer import PPOExperienceBuffer
 from grid.utils import Point, Direction, Action
 from grid.map import tiles_to_tensor, map_to_tiles
 from grid.node import DirectionalNode
+from grid.pathfinder import Pathfinder, PathfinderConfig
 
+from agent.v3.inference import get_best_valid_action
 from utils.state import StateManager
 
 from til_environment.types import RewardNames
 
+
+def best_infer(model, actor_input, valid_actions):
+    with torch.no_grad():
+        embedding = model.actor_encoder(actor_input)
+        logits = model.actor(embedding).squeeze(0)
+
+    dist = Categorical(logits=logits)
+    action_probs = dist.probs
+
+    best_action = get_best_valid_action(action_probs, valid_actions) # type: ignore
+
+    if best_action is None:
+        return random.choice(range(5))
+
+    return best_action
 
 def run_episode(
     env,
@@ -245,7 +264,7 @@ def evaluate(env, model, args, device, seed):
 
     total_rewards = 0
     total_steps = 0
-    num_episodes = 80
+    num_episodes = 1024
 
     # Track individual episode statistics for detailed analysis
     episode_rewards = []
@@ -281,6 +300,16 @@ def evaluate(env, model, args, device, seed):
             use_mapped_viewcone=args.mapped_viewcone
         )
 
+        visited: Counter[Point] = Counter()
+
+        pathfinder = Pathfinder(
+            env.maps[env.scout],
+            PathfinderConfig(
+                use_viewcone=False,
+                use_path_density=False
+            )
+        )
+
         # Run one episode
         while not done:
             # Get observation, reward, etc. for the current agent's turn
@@ -310,6 +339,8 @@ def evaluate(env, model, args, device, seed):
             direction = Direction(observation["direction"])
             node: DirectionalNode = env.maps[env.scout].get_node(position, direction)
             valid_actions = set(node.children.keys())
+
+            visited[position] += 1
 
             env.maps[env.scout](observation)
 
@@ -356,14 +387,36 @@ def evaluate(env, model, args, device, seed):
                 action not in valid_actions
                 and args.prevent_invalid_actions
             ):
-                with torch.no_grad():
-                    action, log_prob, entropy, value = model.get_action_and_value(actor_input, critic_input, deterministic=True)
+                action = best_infer(model, actor_input, valid_actions)
 
-                action = action.item()
+                # with torch.no_grad():
+                #     action, log_prob, entropy, value = model.get_action_and_value(actor_input, critic_input, deterministic=True)
+
+                # action = action.item()
                 tries += 1
 
                 if tries >= max_retries:
                     break
+
+            _action = Action(action)
+
+            if _action != Action.STAY:
+                next_node = node.children[_action]
+                next_position = next_node.position
+
+                if visited[next_position] >= 2:
+                    if env.maps[env.scout].get_guards().sum() == 0:
+                        action = int(pathfinder.get_optimal_action(
+                            position,
+                            direction,
+                            is_guard=False,
+                            density=env.maps[env.scout].get_rewards()
+                        ))
+
+                    print(env.maps[env.scout].get_rewards())
+
+                # valid_actions = set(next_node.children.keys())
+
 
             previous_action = action
             env.step(action)
