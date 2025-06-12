@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools >= 75.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "til_environment"
+description = "RL environment for TIL-AI 2025."
+version = "1.3.0"
+dependencies = [
+    "gymnasium==1.1.1",
+    "pygame>=2.1.3",
+    "pettingzoo==1.25.0",
+    "mazelib==0.9.16",
+    "supersuit==3.9.3",
+]

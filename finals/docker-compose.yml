@@ -1,0 +1,166 @@
+services:
+  til-competition-test:
+    build: test_competition_server/
+    image: til_competition_test:latest
+    env_file:
+      - .env
+      - ~/.env
+    container_name: til-competition-test
+    ports:
+      - ${COMPETITION_SERVER_PORT}:${COMPETITION_SERVER_PORT}
+    volumes:
+      - ${HOST_DATA_DIR}:/workspace/data
+      - ./artifacts:/workspace/artifacts
+    shm_size: 32gb
+    working_dir: /workspace/src
+    command: sh -c "sleep 10 && curl -X POST http://localhost:${COMPETITION_SERVER_PORT}/start & uvicorn test_competition_server:app --host 0.0.0.0 --port ${COMPETITION_SERVER_PORT}"
+    healthcheck:
+      test: curl -f http://localhost:${COMPETITION_SERVER_PORT}/health || exit 0
+      interval: 5s
+      timeout: 30s
+      retries: 5
+      start_period: 3s
+  til-finals:
+    build: finals/
+    image: asia-southeast1-docker.pkg.dev/til-ai-2025/${REPO_NAME}/${TEAM_NAME}-server:finals
+    env_file:
+      - .env
+      - ~/.env
+    container_name: til-finals
+    shm_size: 32gb # set upper limit for how much shared memory container can use
+    depends_on:
+      til-competition-test:
+        condition: service_healthy
+        restart: true
+      til-asr:
+        condition: service_healthy
+        restart: true
+      til-cv:
+        condition: service_healthy
+        restart: true
+      til-ocr:
+        condition: service_healthy
+        restart: true
+      til-rl:
+        condition: service_healthy
+        restart: true
+    command: ["python", "participant_server.py"]
+  til-asr:
+    image: asia-southeast1-docker.pkg.dev/til-ai-2025/${REPO_NAME}/${TEAM_NAME}-asr:finals
+    container_name: til-asr
+    environment:
+      NVIDIA_VISIBLE_DEVICES: 0
+      CUDA_VISIBLE_DEVICES: 0
+    ports:
+      - 5001:5001
+    shm_size: 32gb # set upper limit for how much shared memory container can use
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: ["uvicorn", "asr_server:app", "--host", "0.0.0.0", "--port", "5001"]
+    healthcheck:
+      # test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/health')"]
+      test: curl -f http://localhost:5001/health || exit 0
+      interval: 5s
+      timeout: 30s
+      retries: 5
+      start_period: 3s
+  til-cv:
+    image: asia-southeast1-docker.pkg.dev/til-ai-2025/${REPO_NAME}/${TEAM_NAME}-cv:finals
+    container_name: til-cv
+    environment:
+      NVIDIA_VISIBLE_DEVICES: 0
+      CUDA_VISIBLE_DEVICES: 0
+    ports:
+      - 5002:5002
+    shm_size: 32gb # set upper limit for how much shared memory container can use
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: ["uvicorn", "cv_server:app", "--host", "0.0.0.0", "--port", "5002"]
+    healthcheck:
+      # test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5002/health')"]
+      test: curl -f http://localhost:5002/health || exit 0
+      interval: 5s
+      timeout: 30s
+      retries: 5
+      start_period: 3s
+  til-ocr:
+    image: asia-southeast1-docker.pkg.dev/til-ai-2025/${REPO_NAME}/${TEAM_NAME}-ocr:finals
+    container_name: til-ocr
+    environment:
+      NVIDIA_VISIBLE_DEVICES: 0
+      CUDA_VISIBLE_DEVICES: 0
+    ports:
+      - 5003:5003
+    shm_size: 32gb # set upper limit for how much shared memory container can use
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: ["uvicorn", "ocr_server:app", "--host", "0.0.0.0", "--port", "5003"]
+    healthcheck:
+      # test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5003/health')"]
+      test: curl -f http://localhost:5003/health || exit 0
+      interval: 5s
+      timeout: 30s
+      retries: 5
+      start_period: 3s
+  til-rl:
+    image: asia-southeast1-docker.pkg.dev/til-ai-2025/${REPO_NAME}/${TEAM_NAME}-rl:finals
+    container_name: til-rl
+    environment:
+      NVIDIA_VISIBLE_DEVICES: 0
+      CUDA_VISIBLE_DEVICES: 0
+    ports:
+      - 5004:5004
+    shm_size: 32gb # set upper limit for how much shared memory container can use
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    command: ["uvicorn", "rl_server:app", "--host", "0.0.0.0", "--port", "5004"]
+    healthcheck:
+      # test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5004/health')"]
+      test: curl -f http://localhost:5004/health || exit 0
+      interval: 5s
+      timeout: 30s
+      retries: 5
+      start_period: 3s
+  til-surprise:
+    image: asia-southeast1-docker.pkg.dev/til-ai-2025/${REPO_NAME}/${TEAM_NAME}-surprise:finals
+    container_name: til-surprise
+    environment:
+      NVIDIA_VISIBLE_DEVICES: 0
+      CUDA_VISIBLE_DEVICES: 0
+    ports:
+      - 5005:5005
+    shm_size: 32gb # set upper limit for how much shared memory container can use
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    command: ["uvicorn", "surprise_server:app", "--port", "5005", "--host", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5005/health')"]
+      interval: 5s
+      timeout: 30s
+      retries: 5
+      start_period: 3s
