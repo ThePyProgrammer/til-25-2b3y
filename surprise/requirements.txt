@@ -1,0 +1,8 @@
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+
+numpy
+pillow
+
+scikit-image==0.25.2
+opencv-python
