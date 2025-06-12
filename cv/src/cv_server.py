@@ -9,7 +9,8 @@ from typing import Any
 
 from fastapi import FastAPI, Request
 
-from .cv_manager import CVManager
+from cv_manager import CVManager, BATCH_SIZE
+from more_itertools import batched
 
 
 app = FastAPI()
@@ -33,14 +34,19 @@ async def cv(request: Request) -> dict[str, list[list[dict[str, Any]]]]:
     inputs_json = await request.json()
 
     predictions = []
-    for instance in inputs_json["instances"]:
-
-        # Reads the base-64 encoded image and decodes it into bytes.
-        image_bytes = base64.b64decode(instance["b64"])
+    for instances in batched(inputs_json["instances"], BATCH_SIZE):
+        batch_image_bytes = list(map(lambda instance: base64.b64decode(instance["b64"]), instances))
 
         # Performs object detection and appends the result.
-        detections = manager.cv(image_bytes)
-        predictions.append(detections)
+        detections = manager.cv(batch_image_bytes)
+        predictions.extend(detections)
+
+#     for instance in inputs_json["instances"]:
+#         batch_image_bytes = base64.b64decode(instance["b64"])
+
+#         # Performs object detection and appends the result.
+#         detections = manager.cv_slice(batch_image_bytes)
+#         predictions.append(detections)
 
     return {"predictions": predictions}
 

@@ -1,0 +1,18 @@
+services:
+    train:
+        shm_size: '8gb'
+        build:
+            dockerfile: train.Dockerfile
+            context: .
+        volumes:
+            - ./mmdetection:/workspace/mmdetection
+            - ./train_annotations.json:/cv/train_annotations.json
+            - ./val_annotations.json:/cv/val_annotations.json
+            - /home/jupyter/advanced/cv/images:/cv/images
+        deploy:
+            resources:
+                reservations:
+                    devices:
+                        - driver: nvidia
+                          count: all
+                          capabilities: [gpu]
